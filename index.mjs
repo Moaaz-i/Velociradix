@@ -676,16 +676,18 @@ function createApp() {
   const registerRoute = (method, path, handler, options = {}) => {
     const id = native.addRoute(h, method.toUpperCase(), path);
     routes[id] = { handler, mws: options.middlewares ?? [] };
-    routeMeta.push({
-      name: options.name || `${method.toUpperCase()} ${path}`,
-      method: method.toUpperCase(),
-      path,
-      description: options.description || '',
-      headers: options.headers || [],
-      body: options.body || null,
-      query: options.query || [],
-      sampleResponse: options.sampleResponse || null,
-    });
+    if (!options.internal && path !== '/*' && !path.endsWith('/*')) {
+      routeMeta.push({
+        name: options.name || `${method.toUpperCase()} ${path}`,
+        method: method.toUpperCase(),
+        path,
+        description: options.description || '',
+        headers: options.headers || [],
+        body: options.body || null,
+        query: options.query || [],
+        sampleResponse: options.sampleResponse || null,
+      });
+    }
     return app;
   };
 
@@ -730,10 +732,10 @@ function createApp() {
       return app.get(fromPath, (ctx) => ctx.redirect(toPath, status));
     },
     notFound(handler) {
-      return app.all('/*', handler);
+      return app.all('/*', handler, { internal: true });
     },
     notfound(handler) {
-      return app.all('/*', handler);
+      return app.all('/*', handler, { internal: true });
     },
     postman(options = {}) {
       const baseUrl = options.baseUrl || 'http://localhost:3000';
