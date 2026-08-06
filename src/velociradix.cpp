@@ -1,0 +1,1320 @@
+#include "velociradix.hpp"
+
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <fcntl.h>
+#include <memory>
+#include <mutex>
+#include <netinet/in.h>
+#include <sstream>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <arpa/inet.h>
+
+#ifdef __APPLE__
+#include <sys/event.h>
+#include <sys/time.h>
+#else
+#include <sys/epoll.h>
+#endif
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+namespace velociradix {
+
+// ---------------------------------------------------------------------------
+// JSON helpers
+// ---------------------------------------------------------------------------
+namespace json {
+
+std::string string(const std::string& s) {
+    std::string o;
+    o.reserve(s.size() + 2);
+    o += '"';
+    for (char c : s) {
+        switch (c) {
+            case '"':  o += "\\\""; break;
+            case '\\': o += "\\\\"; break;
+            case '\n': o += "\\n"; break;
+            case '\r': o += "\\r"; break;
+            case '\t': o += "\\t"; break;
+            case '\b': o += "\\b"; break;
+            case '\f': o += "\\f"; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+                    o += buf;
+                } else {
+                    o += c;
+                }
+        }
+    }
+    o += '"';
+    return o;
+}
+
+std::string object(std::initializer_list<std::pair<std::string, std::string>> kv) {
+    std::string o = "{";
+    bool first = true;
+    for (const auto& p : kv) {
+        if (!first) o += ',';
+        first = false;
+        o += json::string(p.first);
+        o += ':';
+        o += p.second;
+    }
+    o += '}';
+    return o;
+}
+
+} // namespace json
+
+// ---------------------------------------------------------------------------
+// Small utilities
+// ---------------------------------------------------------------------------
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static std::string url_decode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int hi = hexval(s[i + 1]);
+            int lo = hexval(s[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out += (char)((hi << 4) | lo);
+                i += 2;
+            } else {
+                out += s[i];
+            }
+        } else if (s[i] == '+') {
+            out += ' ';
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+static std::string url_encode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+        }
+    }
+    return out;
+}
+
+static void to_lower(std::string& s) {
+    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+}
+
+static void split_path(const std::string& p, std::vector<std::string>& segs) {
+    segs.clear();
+    size_t i = 1;
+    while (i < p.size()) {
+        size_t slash = p.find('/', i);
+        size_t end = (slash == std::string::npos) ? p.size() : slash;
+        if (end > i) segs.emplace_back(p, i, end - i);
+        if (slash == std::string::npos) break;
+        i = slash + 1;
+    }
+}
+
+static void append_uint(std::string& o, size_t v) {
+    char b[32];
+    int n = 0;
+    do { b[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+    while (n) o += b[--n];
+}
+
+static const char* status_phrase(int code) {
+    switch (code) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 204: return "No Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 304: return "Not Modified";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 413: return "Payload Too Large";
+        case 500: return "Internal Server Error";
+        case 501: return "Not Implemented";
+        default:  return "Unknown";
+    }
+}
+
+static std::string http_date(time_t t) {
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
+    return buf;
+}
+
+static const std::string& cached_date() {
+    static thread_local time_t g_ts = 0;
+    static thread_local std::string g_str;
+    time_t now = time(nullptr);
+    if (now != g_ts) {
+        g_ts = now;
+        g_str = http_date(now);
+    }
+    return g_str;
+}
+
+static bool set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+static void ignore_sigpipe() {
+    static std::once_flag once;
+    std::call_once(once, [] { std::signal(SIGPIPE, SIG_IGN); });
+}
+
+static const std::string* find_header(const Request& req, const char* name) {
+    for (const auto& h : req.headers) {
+        if (h.first == name) return &h.second;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------
+const std::string* Request::header(const std::string& name) const {
+    return find_header(*this, name.c_str());
+}
+
+std::string Request::query(const std::string& key) const {
+    auto it = query_cache.find(key);
+    if (it != query_cache.end()) return it->second;
+    std::string value;
+    if (!query_string.empty()) {
+        size_t i = 0;
+        while (i <= query_string.size()) {
+            size_t amp = query_string.find('&', i);
+            size_t end = (amp == std::string::npos) ? query_string.size() : amp;
+            if (end > i) {
+                size_t eq = query_string.find('=', i);
+                if (eq != std::string::npos && eq < end) {
+                    std::string k = url_decode(query_string.substr(i, eq - i));
+                    if (k == key) {
+                        value = url_decode(query_string.substr(eq + 1, end - eq - 1));
+                        break;
+                    }
+                }
+            }
+            if (amp == std::string::npos) break;
+            i = amp + 1;
+        }
+    }
+    query_cache[key] = value;
+    return value;
+}
+
+std::string Request::cookie(const std::string& key) const {
+    auto it = cookie_cache.find(key);
+    if (it != cookie_cache.end()) return it->second;
+    std::string value;
+    const std::string* chdr = find_header(*this, "cookie");
+    if (chdr && !chdr->empty()) {
+        size_t i = 0;
+        while (i <= chdr->size()) {
+            size_t semi = chdr->find(';', i);
+            size_t end = (semi == std::string::npos) ? chdr->size() : semi;
+            size_t eq = chdr->find('=', i);
+            if (eq != std::string::npos && eq < end) {
+                std::string k(*chdr, i, eq - i);
+                while (!k.empty() && (k.front() == ' ' || k.front() == '\t')) k.erase(0, 1);
+                while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+                if (k == key) {
+                    value = url_decode(std::string(*chdr, eq + 1, end - eq - 1));
+                    break;
+                }
+            }
+            if (semi == std::string::npos) break;
+            i = semi + 1;
+        }
+    }
+    cookie_cache[key] = value;
+    return value;
+}
+
+bool Request::keep_alive() const {
+    const std::string* conn = find_header(*this, "connection");
+    if (http_version == "HTTP/1.0") {
+        return conn && conn->find("keep-alive") != std::string::npos;
+    }
+    if (conn) return conn->find("close") == std::string::npos;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Response
+// ---------------------------------------------------------------------------
+void Response::set_header(const std::string& name, const std::string& value) {
+    std::string lname = name;
+    to_lower(lname);
+    for (auto& h : headers) {
+        if (h.first == lname) { h.second = value; return; }
+    }
+    headers.emplace_back(std::move(lname), value);
+}
+
+const std::string* Response::get_header(const std::string& name) const {
+    for (const auto& h : headers) {
+        if (h.first == name) return &h.second;
+    }
+    return nullptr;
+}
+
+void Response::set_cookie(const std::string& name, const std::string& value,
+                          const std::string& attributes) {
+    std::string c = name + "=" + url_encode(value);
+    if (!attributes.empty()) c += attributes;
+    set_header("set-cookie", c);
+}
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+void Context::send(const std::string& text) {
+    if (ended) return;
+    ended = true;
+    res.body = text;
+}
+
+void Context::json(const std::string& raw) {
+    if (ended) return;
+    res.set_header("content-type", "application/json");
+    send(raw);
+}
+
+void Context::html(const std::string& body) {
+    if (ended) return;
+    res.set_header("content-type", "text/html");
+    send(body);
+}
+
+void Context::redirect(const std::string& location, int code) {
+    if (ended) return;
+    res.set_header("location", location);
+    res.status = code;
+    send("");
+}
+
+// ---------------------------------------------------------------------------
+// HTTP request parser
+// Returns bytes consumed; 0 = need more data; -1 = malformed.
+// ---------------------------------------------------------------------------
+static long parse_request(const char* data, size_t len, Request& req) {
+    if (len < 4) return 0;
+    const char* he = nullptr;
+    for (size_t i = 0; i + 3 < len; ++i) {
+        if (data[i] == '\r' && data[i + 1] == '\n' &&
+            data[i + 2] == '\r' && data[i + 3] == '\n') {
+            he = data + i;
+            break;
+        }
+    }
+    if (!he) return 0; // incomplete header
+
+    const char* end = he;
+    // request line: METHOD SP TARGET SP VERSION
+    const char* p = data;
+    const char* sp1 = (const char*)memchr(p, ' ', (size_t)(end - p));
+    if (!sp1) return -1;
+    req.method.assign(p, sp1 - p);
+    p = sp1 + 1;
+    const char* sp2 = (const char*)memchr(p, ' ', (size_t)(end - p));
+    if (!sp2) return -1;
+    const char* ts = p;
+    const char* qmark = (const char*)memchr(ts, '?', (size_t)(sp2 - ts));
+    if (qmark) {
+        req.path.assign(ts, qmark - ts);
+        req.query_string.assign(qmark + 1, (sp2 - qmark) - 1);
+    } else {
+        req.path.assign(ts, sp2 - ts);
+    }
+    p = sp2 + 1;
+    const char* le = (const char*)memchr(p, '\r', (size_t)(end - p));
+    if (!le) return -1;
+    req.http_version.assign(p, le - p);
+
+    // headers
+    const char* h = le + 2;
+    while (h < end) {
+        // The last header line's '\r' sits exactly at `end`, so the search range
+        // must include `end` itself.
+        const char* line_end = (const char*)memchr(h, '\r', (size_t)(end - h) + 1);
+        if (!line_end || line_end[1] != '\n') return -1;
+        const char* colon = (const char*)memchr(h, ':', (size_t)(line_end - h));
+        if (colon) {
+            std::string name(h, colon - h);
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+            to_lower(name);
+            const char* vs = colon + 1;
+            while (vs < line_end && (*vs == ' ' || *vs == '\t')) ++vs;
+            std::string value(vs, line_end - vs);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.pop_back();
+            req.headers.emplace_back(std::move(name), std::move(value));
+        }
+        h = line_end + 2;
+    }
+
+    // body
+    size_t content_length = 0;
+    for (const auto& hd : req.headers) {
+        if (hd.first == "content-length") {
+            try {
+                content_length = (size_t)std::stoul(hd.second);
+            } catch (...) {
+                return -1;
+            }
+        } else if (hd.first == "transfer-encoding") {
+            return -1; // chunked not supported
+        }
+    }
+    size_t consumed = (size_t)(end - data) + 4;
+    if (consumed + content_length > len) return 0; // need body
+    req.body.assign(data + consumed, content_length);
+    return (long)(consumed + content_length);
+}
+
+// ---------------------------------------------------------------------------
+// Router (prefix trie with :params)
+// ---------------------------------------------------------------------------
+struct App::TrieNode {
+    std::unordered_map<std::string, TrieNode*> children;
+    TrieNode* param_child = nullptr;
+    std::string param_name;
+    TrieNode* wildcard_child = nullptr;
+    std::string wildcard_name;
+    std::unordered_map<std::string, std::pair<Handler, std::vector<Middleware>>> methods;
+
+    ~TrieNode() {
+        for (auto& c : children) delete c.second;
+        delete param_child;
+        delete wildcard_child;
+    }
+};
+
+void App::add_route(const std::string& method, const std::string& route,
+                    Handler h, std::vector<Middleware> mws) {
+    TrieNode* cur = root_;
+    size_t i = 1;
+    while (i <= route.size()) {
+        size_t slash = route.find('/', i);
+        size_t end = (slash == std::string::npos) ? route.size() : slash;
+        std::string seg = route.substr(i, end - i);
+        if (seg.empty()) {
+            if (slash == std::string::npos) break;
+            i = slash + 1;
+            continue;
+        }
+        if (seg == "*" || seg[0] == '*') {
+            if (!cur->wildcard_child) {
+                cur->wildcard_child = new TrieNode();
+                cur->wildcard_name = (seg.size() > 1 && seg[0] == '*') ? seg.substr(1) : "*";
+            }
+            cur = cur->wildcard_child;
+        } else if (seg[0] == ':') {
+            if (!cur->param_child) {
+                cur->param_child = new TrieNode();
+                cur->param_name = seg.substr(1);
+            }
+            cur = cur->param_child;
+        } else {
+            auto it = cur->children.find(seg);
+            if (it == cur->children.end()) {
+                TrieNode* n = new TrieNode();
+                cur->children[seg] = n;
+                cur = n;
+            } else {
+                cur = it->second;
+            }
+        }
+        if (slash == std::string::npos) break;
+        i = slash + 1;
+    }
+    cur->methods[method] = { std::move(h), std::move(mws) };
+}
+
+bool App::match_route(TrieNode* node, const std::string& method,
+                      const std::vector<std::string>& segs, size_t idx,
+                      Handler& out, std::vector<Middleware>& out_mws,
+                      std::unordered_map<std::string, std::string>& params) {
+    if (idx == segs.size()) {
+        auto it = node->methods.find(method);
+        if (it != node->methods.end()) {
+            out = it->second.first;
+            out_mws = it->second.second;
+            return true;
+        }
+        if (node->wildcard_child) {
+            auto wit = node->wildcard_child->methods.find(method);
+            if (wit != node->wildcard_child->methods.end()) {
+                out = wit->second.first;
+                out_mws = wit->second.second;
+                return true;
+            }
+        }
+        return false;
+    }
+    const std::string& seg = segs[idx];
+
+    // 1. Try static match
+    auto it = node->children.find(seg);
+    if (it != node->children.end() &&
+        match_route(it->second, method, segs, idx + 1, out, out_mws, params)) {
+        return true;
+    }
+
+    // 2. Try param match (:param)
+    if (node->param_child) {
+        params[node->param_name] = seg;
+        if (match_route(node->param_child, method, segs, idx + 1, out, out_mws, params)) {
+            return true;
+        }
+        params.erase(node->param_name);
+    }
+
+    // 3. Try wildcard match (*)
+    if (node->wildcard_child) {
+        if (match_route(node->wildcard_child, method, segs, idx + 1, out, out_mws, params)) {
+            return true;
+        }
+        auto wit = node->wildcard_child->methods.find(method);
+        if (wit != node->wildcard_child->methods.end()) {
+            out = wit->second.first;
+            out_mws = wit->second.second;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void App::run_chain(const std::vector<Middleware>& mws, size_t idx, Context& ctx, const Handler& h) {
+    if (idx < mws.size()) {
+        Middleware mw = mws[idx];
+        std::function<void()> next = [&mws, idx, &ctx, &h]() { run_chain(mws, idx + 1, ctx, h); };
+        mw(ctx, next);
+    } else {
+        h(ctx);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Connection + Worker (event loop)
+// ---------------------------------------------------------------------------
+struct Conn {
+    int fd = -1;
+    App::Worker* worker = nullptr;
+
+    std::string in;    // read buffer
+    size_t consumed = 0;
+    std::string out;   // pending write data
+    std::mutex wmtx;   // guards out for cross-thread writes
+    std::atomic<bool> closed{false};
+    std::atomic<bool> streaming{false};
+    std::atomic<bool> want_close{false};
+    bool peer_half_closed = false;
+    bool write_enabled = false;
+
+    // Refcounted lifetime: refs 1 = owned by the worker; async handlers may
+    // hold extra refs across the JS round-trip. The last release deletes.
+    std::atomic<int> refs{1};
+    // Ordered async responses: responses are appended to `out` in request
+    // order, so HTTP/1.1 pipelining stays correct even when JS handlers
+    // complete out of order.
+    std::mutex rmtx;
+    uint64_t next_req_seq = 1;
+    uint64_t next_resp_seq = 1;
+    std::unordered_map<uint64_t, std::string> pending_resp;
+
+    void append(const char* data, size_t len) {
+        std::lock_guard<std::mutex> lk(wmtx);
+        if (closed) return;
+        out.append(data, len);
+    }
+    void append(const std::string& s) { append(s.data(), s.size()); }
+};
+
+// ---- platform event-loop abstraction ------------------------------------
+struct ev_event {
+    int fd;
+    bool read;
+    bool write;
+    bool err;
+};
+
+static int ev_create() {
+#ifdef __APPLE__
+    return kqueue();
+#else
+    return epoll_create1(EPOLL_CLOEXEC);
+#endif
+}
+
+static bool ev_mod(int loop, int fd, bool r, bool w) {
+#ifdef __APPLE__
+    struct kevent ch[2];
+    int n = 0;
+    EV_SET(&ch[n++], fd, EVFILT_READ, EV_ADD | (r ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
+    EV_SET(&ch[n++], fd, EVFILT_WRITE, EV_ADD | (w ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
+    return kevent(loop, ch, n, nullptr, 0, nullptr) >= 0;
+#else
+    struct epoll_event e{};
+    e.events = (r ? EPOLLIN : 0) | (w ? EPOLLOUT : 0);
+    e.data.fd = fd;
+    return epoll_ctl(loop, EPOLL_CTL_MOD, fd, &e) == 0;
+#endif
+}
+
+static bool ev_add(int loop, int fd, bool r, bool w) {
+#ifdef __APPLE__
+    struct kevent ch[2];
+    int n = 0;
+    if (r) EV_SET(&ch[n++], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, nullptr);
+    if (w) EV_SET(&ch[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE, 0, 0, nullptr);
+    return n > 0 && kevent(loop, ch, n, nullptr, 0, nullptr) >= 0;
+#else
+    struct epoll_event e{};
+    e.events = (r ? EPOLLIN : 0) | (w ? EPOLLOUT : 0);
+    e.data.fd = fd;
+    return epoll_ctl(loop, EPOLL_CTL_ADD, fd, &e) == 0;
+#endif
+}
+
+static int ev_wait(int loop, ev_event* evs, int max) {
+#ifdef __APPLE__
+    struct kevent out[256];
+    int n = kevent(loop, nullptr, 0, out, std::min(max, 256), nullptr);
+    for (int i = 0; i < n; ++i) {
+        evs[i].fd = (int)out[i].ident;
+        evs[i].err = (out[i].flags & EV_ERROR) != 0;
+        evs[i].read = (out[i].filter == EVFILT_READ);
+        evs[i].write = (out[i].filter == EVFILT_WRITE);
+    }
+    return n;
+#else
+    struct epoll_event out[256];
+    int n = epoll_wait(loop, out, std::min(max, 256), -1);
+    for (int i = 0; i < n; ++i) {
+        evs[i].fd = out[i].data.fd;
+        evs[i].err = (out[i].events & (EPOLLERR | EPOLLHUP)) != 0;
+        evs[i].read = (out[i].events & EPOLLIN) != 0;
+        evs[i].write = (out[i].events & EPOLLOUT) != 0;
+    }
+    return n;
+#endif
+}
+
+struct App::Worker {
+    App* app;
+    int loop_fd = -1;
+    int listen_fd = -1;
+    int wake_pipe[2] = { -1, -1 };
+    std::unordered_map<int, Conn*> conns;
+
+    explicit Worker(App* a, int lfd) : app(a), listen_fd(lfd) {}
+
+    void request_write(int fd) { ev_mod(loop_fd, fd, true, true); }
+    void request_write_off(int fd) { ev_mod(loop_fd, fd, true, false); }
+
+    void run() {
+        ignore_sigpipe();
+
+        loop_fd = ev_create();
+        if (loop_fd < 0) return;
+        if (::pipe(wake_pipe) < 0) { ::close(loop_fd); return; }
+        set_nonblocking(wake_pipe[0]);
+
+        {
+            std::lock_guard<std::mutex> lk(app->wake_mutex_);
+            app->wake_fds_.push_back(wake_pipe[1]);
+        }
+
+        ev_add(loop_fd, wake_pipe[0], true, false);
+        ev_add(loop_fd, listen_fd, true, false);
+
+        ev_event events[256];
+        while (app->running_.load()) {
+            int n = ev_wait(loop_fd, events, 256);
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            for (int i = 0; i < n; ++i) {
+                ev_event& e = events[i];
+                if (e.fd == wake_pipe[0]) {
+                    char junk[128];
+                    while (::read(wake_pipe[0], junk, sizeof(junk)) > 0) {}
+                    continue;
+                }
+                if (e.fd == listen_fd) {
+                    accept_loop();
+                    continue;
+                }
+                auto it = conns.find(e.fd);
+                if (it == conns.end()) continue;
+                Conn* c = it->second;
+                if (e.err) { close_conn(e.fd, c); continue; }
+                if (e.read) {
+                    on_readable(e.fd, c);
+                    if (conns.count(e.fd) == 0) continue;
+                }
+                if (e.write) {
+                    flush(c);
+                    if (conns.count(e.fd) == 0) continue;
+                    if ((c->want_close || c->peer_half_closed) && c->out.empty()) {
+                        close_conn(e.fd, c);
+                    }
+                }
+            }
+        }
+
+        for (auto& kv : conns) {
+            kv.second->closed = true;
+            ::close(kv.first);
+            if (--kv.second->refs == 0) delete kv.second;
+        }
+        conns.clear();
+        ::close(listen_fd);
+        ::close(wake_pipe[0]);
+        ::close(loop_fd);
+    }
+
+    void accept_loop() {
+        for (;;) {
+            int cfd = ::accept(listen_fd, nullptr, nullptr);
+            if (cfd < 0) {
+                if (errno == EINTR) continue;
+                break; // EAGAIN
+            }
+            set_nonblocking(cfd);
+#ifdef SO_NOSIGPIPE
+            int one = 1;
+            setsockopt(cfd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+            Conn* c = new Conn();
+            c->fd = cfd;
+            c->worker = this;
+            ev_add(loop_fd, cfd, true, false);
+            conns[cfd] = c;
+        }
+    }
+
+    void on_readable(int fd, Conn* c) {
+        char buf[16384];
+        for (;;) {
+            ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            if (n > 0) {
+                c->in.append(buf, (size_t)n);
+                if (c->in.size() > app->payload_limit_) { // max request body
+                    send_error(c, 413, "Payload Too Large");
+                    c->in.clear();
+                    c->consumed = 0;
+                    c->want_close = true;
+                    return;
+                }
+            } else if (n == 0) {
+                c->peer_half_closed = true;
+                break;
+            } else {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                close_conn(fd, c);
+                return;
+            }
+            if (c->peer_half_closed) break;
+        }
+        if (!c->streaming) process_pending(c);
+        flush(c);
+        if (conns.count(fd) == 0) return;
+        if ((c->want_close || c->peer_half_closed) && c->out.empty()) {
+            close_conn(fd, c);
+        }
+    }
+
+    void process_pending(Conn* c) {
+        static thread_local Request scratch;
+        for (;;) {
+            if (c->streaming) break;
+            const char* data = c->in.data() + c->consumed;
+            size_t avail = c->in.size() - c->consumed;
+            if (avail == 0) break;
+
+            scratch.headers.clear();
+            scratch.query_cache.clear();
+            scratch.cookie_cache.clear();
+            long n = parse_request(data, avail, scratch);
+            if (n == 0) break; // incomplete
+            if (n < 0) {
+                send_error(c, 400, "Bad Request");
+                c->consumed = c->in.size();
+                c->want_close = true;
+                break;
+            }
+            app->handle_request(c, scratch);
+            c->consumed += (size_t)n;
+            if (c->want_close) break;
+        }
+        if (c->consumed >= c->in.size()) {
+            c->in.clear();
+            c->consumed = 0;
+        } else if (c->consumed > 65536) {
+            c->in.erase(0, c->consumed);
+            c->consumed = 0;
+        }
+    }
+
+    void send_error(Conn* c, int status, const char* msg) {
+        std::string res;
+        res += "HTTP/1.1 ";
+        res += std::to_string(status);
+        res += " ";
+        res += status_phrase(status);
+        res += "\r\nContent-Length: ";
+        res += std::to_string(std::strlen(msg));
+        res += "\r\nConnection: close\r\nServer: velociradix\r\n\r\n";
+        res += msg;
+        c->append(res);
+    }
+
+    void flush(Conn* c) {
+        std::unique_lock<std::mutex> lk(c->wmtx);
+        if (c->closed) return;
+        while (!c->out.empty()) {
+            ssize_t n = ::send(c->fd, c->out.data(), c->out.size(), MSG_NOSIGNAL);
+            if (n > 0) {
+                c->out.erase(0, (size_t)n);
+                continue;
+            }
+            if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                lk.unlock();
+                request_write(c->fd);
+                return;
+            }
+            // fatal error
+            lk.unlock();
+            close_conn(c->fd, c);
+            return;
+        }
+        if (c->out.empty() && c->write_enabled) {
+            c->write_enabled = false;
+            lk.unlock();
+            request_write_off(c->fd);
+        }
+    }
+
+    void close_conn(int fd, Conn* c) {
+        conns.erase(fd);
+        c->closed = true;
+        ::close(fd);
+        if (--c->refs == 0) delete c;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// SSE
+// ---------------------------------------------------------------------------
+void Context::sse(const std::function<void(SseStream&)>& producer) {
+    if (ended || !conn) return;
+    ended = true;
+
+    res.set_header("content-type", "text/event-stream");
+    res.set_header("cache-control", "no-cache");
+    res.set_header("connection", "keep-alive");
+
+    {
+        std::lock_guard<std::mutex> lk(conn->wmtx);
+        conn->streaming = true;
+        std::string& o = conn->out;
+        o += "HTTP/1.1 200 OK\r\n";
+        for (const auto& h : res.headers) {
+            o += h.first;
+            o += ": ";
+            o += h.second;
+            o += "\r\n";
+        }
+        o += "\r\n";
+    }
+
+    SseStream* stream = new SseStream(conn);
+    std::thread([producer, stream]() {
+        producer(*stream);
+        stream->close();
+        delete stream;
+    }).detach();
+}
+
+void SseStream::send_event(const std::string& data, const std::string& event) {
+    if (closed_ || !conn_) return;
+    std::string frame;
+    if (!event.empty()) {
+        frame += "event: ";
+        frame += event;
+        frame += "\n";
+    }
+    frame += "data: ";
+    frame += data;
+    frame += "\n\n";
+    conn_->append(frame);
+    if (conn_->worker) conn_->worker->request_write(conn_->fd);
+}
+
+void SseStream::close() {
+    if (closed_) return;
+    closed_ = true;
+    if (!conn_) return;
+    {
+        std::lock_guard<std::mutex> lk(conn_->wmtx);
+        conn_->streaming = false;
+        conn_->want_close = true;
+    }
+    if (conn_->worker) conn_->worker->request_write(conn_->fd);
+}
+
+// ---------------------------------------------------------------------------
+// Static file serving
+// ---------------------------------------------------------------------------
+static const char* mime_for(const std::string& path) {
+    size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) return "application/octet-stream";
+    std::string ext = path.substr(dot);
+    if (ext == ".html") return "text/html";
+    if (ext == ".css") return "text/css";
+    if (ext == ".js") return "application/javascript";
+    if (ext == ".mjs") return "application/javascript";
+    if (ext == ".json") return "application/json";
+    if (ext == ".png") return "image/png";
+    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".gif") return "image/gif";
+    if (ext == ".svg") return "image/svg+xml";
+    if (ext == ".ico") return "image/x-icon";
+    if (ext == ".txt") return "text/plain";
+    if (ext == ".xml") return "application/xml";
+    if (ext == ".pdf") return "application/pdf";
+    if (ext == ".woff") return "font/woff";
+    if (ext == ".woff2") return "font/woff2";
+    return "application/octet-stream";
+}
+
+void Context::serve_file(const std::string& filepath) {
+    if (ended) return;
+    int fd = ::open(filepath.c_str(), O_RDONLY);
+    if (fd < 0) {
+        res.status = 404;
+        json(json::object({{"error", json::string("Not Found")}}));
+        return;
+    }
+    struct stat st{};
+    if (fstat(fd, &st) < 0 || S_ISDIR(st.st_mode)) {
+        ::close(fd);
+        res.status = 404;
+        json(json::object({{"error", json::string("Not Found")}}));
+        return;
+    }
+    if (st.st_size > (off_t)(64 * 1024 * 1024)) {
+        ::close(fd);
+        res.status = 413;
+        json(json::object({{"error", json::string("File too large")}}));
+        return;
+    }
+    std::string data((size_t)st.st_size, '\0');
+    size_t got = 0;
+    while (got < data.size()) {
+        ssize_t r = ::read(fd, data.data() + got, data.size() - got);
+        if (r <= 0) break;
+        got += (size_t)r;
+    }
+    ::close(fd);
+    res.set_header("content-type", mime_for(filepath));
+    res.body = std::move(data);
+    ended = true;
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+App::App() { root_ = new TrieNode(); }
+
+App::~App() {
+    if (running_.load()) close();
+    delete root_;
+}
+
+App& App::get(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("GET", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::post(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("POST", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::put(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("PUT", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::del(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("DELETE", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::patch(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("PATCH", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::head(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("HEAD", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::options(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    add_route("OPTIONS", p, std::move(h), std::move(mws));
+    return *this;
+}
+App& App::use(Middleware mw) {
+    global_mws_.push_back(std::move(mw));
+    return *this;
+}
+App& App::enable_cors() { cors_ = true; return *this; }
+App& App::set_workers(size_t n) { workers_n_ = n; return *this; }
+App& App::set_payload_limit(size_t bytes) { payload_limit_ = bytes; return *this; }
+App& App::set_static_dir(const std::string& dir) { static_dir_ = dir; return *this; }
+
+App& App::group(const std::string& prefix, const std::function<void(RouteGroup&)>& cb) {
+    RouteGroup g(this, prefix);
+    cb(g);
+    return *this;
+}
+
+RouteGroup::RouteGroup(App* app, std::string prefix) : app_(app), prefix_(std::move(prefix)) {}
+
+static std::string join_prefix(const std::string& prefix, const std::string& p) {
+    if (prefix.empty()) return p;
+    if (!p.empty() && p[0] == '/') return prefix + p;
+    if (prefix.back() == '/') return prefix + p;
+    return prefix + "/" + p;
+}
+
+RouteGroup& RouteGroup::get(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    app_->add_route("GET", join_prefix(prefix_, p), std::move(h), std::move(mws));
+    return *this;
+}
+RouteGroup& RouteGroup::post(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    app_->add_route("POST", join_prefix(prefix_, p), std::move(h), std::move(mws));
+    return *this;
+}
+RouteGroup& RouteGroup::put(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    app_->add_route("PUT", join_prefix(prefix_, p), std::move(h), std::move(mws));
+    return *this;
+}
+RouteGroup& RouteGroup::del(const std::string& p, Handler h, std::vector<Middleware> mws) {
+    app_->add_route("DELETE", join_prefix(prefix_, p), std::move(h), std::move(mws));
+    return *this;
+}
+
+static int make_listen_socket(int port, const std::string& host) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) throw std::runtime_error("socket() failed");
+    int opt = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
+        ::close(fd);
+        throw std::runtime_error("invalid host: " + host);
+    }
+    if (::bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        ::close(fd);
+        throw std::runtime_error("bind(" + host + ":" + std::to_string(port) + ") failed");
+    }
+    if (::listen(fd, 1024) < 0) {
+        ::close(fd);
+        throw std::runtime_error("listen() failed");
+    }
+    set_nonblocking(fd);
+    return fd;
+}
+
+void App::listen(int port, const std::string& host) {
+    ignore_sigpipe();
+    running_.store(true);
+
+    size_t nw = workers_n_;
+    if (nw == 0) {
+        unsigned int hw = std::thread::hardware_concurrency();
+        nw = (hw > 0) ? hw : 1;
+    }
+
+    std::vector<int> listen_fds;
+    listen_fds.reserve(nw);
+    for (size_t i = 0; i < nw; ++i) {
+        listen_fds.push_back(make_listen_socket(port, host));
+    }
+
+    for (size_t i = 0; i < nw; ++i) {
+        threads_.emplace_back([this, fd = listen_fds[i]]() {
+            Worker w(this, fd);
+            w.run();
+        });
+    }
+
+    for (auto& t : threads_) t.join();
+    threads_.clear();
+
+    {
+        std::lock_guard<std::mutex> lk(wake_mutex_);
+        for (int fd : wake_fds_) ::close(fd);
+        wake_fds_.clear();
+    }
+    running_.store(false);
+}
+
+void App::close() {
+    running_.store(false);
+    {
+        std::lock_guard<std::mutex> lk(wake_mutex_);
+        for (int fd : wake_fds_) {
+            char b = 1;
+            ssize_t n = ::write(fd, &b, 1);
+            (void)n;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Request handling
+// ---------------------------------------------------------------------------
+void App::handle_request(Conn* c, Request& req) {
+    Response res;
+    Context ctx(req, res, c);
+
+    if (cors_) {
+        res.set_header("access-control-allow-origin", "*");
+        res.set_header("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
+        res.set_header("access-control-allow-headers", "Content-Type,Authorization");
+        res.set_header("access-control-max-age", "86400");
+        if (req.method == "OPTIONS") {
+            res.status = 204;
+            res.body.clear();
+            ctx.ended = true;
+            finalize(c, req, res);
+            return;
+        }
+    }
+
+    static thread_local std::vector<std::string> segs;
+    split_path(req.path, segs);
+    Handler handler;
+    std::vector<Middleware> route_mws;
+    std::unordered_map<std::string, std::string> params;
+    bool found = match_route(root_, req.method, segs, 0, handler, route_mws, params);
+
+    if (found) {
+        ctx.params = std::move(params);
+        std::vector<Middleware> chain;
+        chain.reserve(global_mws_.size() + route_mws.size());
+        chain.insert(chain.end(), global_mws_.begin(), global_mws_.end());
+        chain.insert(chain.end(), route_mws.begin(), route_mws.end());
+        try {
+            run_chain(chain, 0, ctx, handler);
+        } catch (const std::exception& e) {
+            if (!ctx.ended) {
+                res.status = 500;
+                const char* msg = e.what();
+                ctx.json(json::object({{"error", json::string(msg ? msg : "Internal Server Error")}}));
+            }
+        }
+        if (!ctx.ended) ctx.send("");
+    } else if (!static_dir_.empty() && req.method == "GET") {
+        try {
+            ctx.serve_file(static_dir_ + req.path);
+        } catch (...) {
+            res.status = 500;
+            ctx.json(json::object({{"error", json::string("Internal Server Error")}}));
+        }
+    } else {
+        res.status = 404;
+        ctx.json(json::object({{"error", json::string("Route not found")}}));
+    }
+
+    if (!ctx.took_over) finalize(c, req, res);
+}
+
+void App::finalize(Conn* c, const Request& req, Response& res) {
+    if (c->streaming.load()) return; // SSE already wrote headers
+
+    bool keep_alive = req.keep_alive();
+    if (!keep_alive) c->want_close.store(true);
+
+    std::lock_guard<std::mutex> lk(c->wmtx);
+    std::string& o = c->out;
+    o += "HTTP/1.1 ";
+    append_uint(o, (size_t)res.status);
+    o += " ";
+    o += status_phrase(res.status);
+    o += "\r\n";
+
+    bool has_cl = false;
+    for (const auto& h : res.headers) {
+        o += h.first;
+        o += ": ";
+        o += h.second;
+        o += "\r\n";
+        std::string hname = h.first;
+        to_lower(hname);
+        if (hname == "content-length") has_cl = true;
+    }
+    if (!has_cl) {
+        o += "Content-Length: ";
+        append_uint(o, res.body.size());
+        o += "\r\n";
+    }
+    o += "Connection: ";
+    o += keep_alive ? "keep-alive" : "close";
+    o += "\r\nDate: ";
+    o += cached_date();
+    o += "\r\nServer: velociradix\r\n\r\n";
+    o += res.body;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-thread async handler APIs (used by the JS addon)
+// ---------------------------------------------------------------------------
+void App::hold_conn(Conn* c) { c->refs.fetch_add(1); }
+void App::release_conn(Conn* c) { if (--c->refs == 0) delete c; }
+uint64_t App::alloc_seq(Conn* c) { return c->next_req_seq++; }
+
+void App::respond_async(Conn* c, uint64_t seq, int status,
+                        std::vector<std::pair<std::string, std::string>> headers,
+                        std::string body, bool keep_alive) {
+    std::string raw;
+    raw += "HTTP/1.1 ";
+    append_uint(raw, (size_t)status);
+    raw += " ";
+    raw += status_phrase(status);
+    raw += "\r\n";
+    bool has_cl = false;
+    for (const auto& h : headers) {
+        raw += h.first;
+        raw += ": ";
+        raw += h.second;
+        raw += "\r\n";
+        std::string hname = h.first;
+        to_lower(hname);
+        if (hname == "content-length") has_cl = true;
+    }
+    if (!has_cl) {
+        raw += "Content-Length: ";
+        append_uint(raw, body.size());
+        raw += "\r\n";
+    }
+    raw += "Connection: ";
+    raw += keep_alive ? "keep-alive" : "close";
+    raw += "\r\nDate: ";
+    raw += cached_date();
+    raw += "\r\nServer: velociradix\r\n\r\n";
+    raw += body;
+
+    bool appended = false;
+    {
+        std::lock_guard<std::mutex> lk(c->rmtx);
+        c->pending_resp.emplace(seq, std::move(raw));
+        while (true) {
+            auto it = c->pending_resp.find(c->next_resp_seq);
+            if (it == c->pending_resp.end()) break;
+            {
+                std::lock_guard<std::mutex> lk2(c->wmtx);
+                if (!c->closed) {
+                    c->out += it->second;
+                    if (!keep_alive) c->want_close.store(true);
+                    appended = true;
+                }
+            }
+            c->pending_resp.erase(it);
+            c->next_resp_seq++;
+        }
+    }
+    if (appended && c->worker) c->worker->request_write(c->fd);
+    // Release the async handler's reference (one per hold_conn).
+    release_conn(c);
+}
+
+void App::begin_sse(Conn* c) {
+    std::lock_guard<std::mutex> lk(c->wmtx);
+    if (c->streaming.load() || c->closed) return;
+    c->streaming = true;
+    std::string& o = c->out;
+    o += "HTTP/1.1 200 OK\r\n";
+    o += "content-type: text/event-stream\r\n";
+    o += "cache-control: no-cache\r\n";
+    o += "connection: keep-alive\r\n";
+    o += "Date: ";
+    o += cached_date();
+    o += "\r\nServer: velociradix\r\n\r\n";
+    if (c->worker) c->worker->request_write(c->fd);
+}
+
+void App::sse_send(Conn* c, const std::string& data, const std::string& event) {
+    std::string frame;
+    if (!event.empty()) {
+        frame += "event: ";
+        frame += event;
+        frame += "\n";
+    }
+    frame += "data: ";
+    frame += data;
+    frame += "\n\n";
+    {
+        std::lock_guard<std::mutex> lk(c->wmtx);
+        if (c->closed || !c->streaming.load()) return;
+        c->out += frame;
+    }
+    if (c->worker) c->worker->request_write(c->fd);
+}
+
+void App::sse_end(Conn* c) {
+    {
+        std::lock_guard<std::mutex> lk(c->wmtx);
+        c->streaming = false;
+        c->want_close = true;
+    }
+    if (c->worker) c->worker->request_write(c->fd);
+}
+
+} // namespace velociradix
