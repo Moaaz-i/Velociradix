@@ -15,11 +15,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
-#include <fcntl.h>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unistd.h>
 #include <vector>
 
 #define NAPI_CALL(env, call) \
