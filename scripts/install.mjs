@@ -37,7 +37,7 @@ async function downloadHeaders() {
   const buf = Buffer.from(await res.arrayBuffer());
   writeFileSync(tgz, buf);
   rmSync(path.join(cacheDir, 'include'), { recursive: true, force: true });
-  const r = spawnSync('tar', ['-xzf', tgz, '-C', cacheDir], { stdio: 'inherit' });
+  const r = spawnSync('tar', ['-xzf', path.basename(tgz)], { cwd: cacheDir, stdio: 'inherit' });
   rmSync(tgz, { force: true });
   if (r.status !== 0) throw new Error('failed to extract Node headers (need `tar`)');
 
