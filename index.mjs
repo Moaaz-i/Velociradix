@@ -1,10 +1,14 @@
 // velociradix — Zero-dependency, ultra-fast C++17 HTTP Engine JS Facade
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+} from "node:crypto";
+import { EventEmitter } from "node:events";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from 'node:module';
-import { createHmac, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { gzipSync, deflateSync } from 'node:zlib';
-import { statSync, existsSync, readFileSync } from 'node:fs';
-import { resolve, extname, basename } from 'node:path';
-import { EventEmitter } from 'node:events';
+import { extname, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 
@@ -811,7 +815,7 @@ function createApp() {
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     body { background: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
-    
+
     /* Sidebar */
     .sidebar { width: 320px; background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
     .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px; }
@@ -824,7 +828,7 @@ function createApp() {
     .request-item { padding: 10px 16px; display: flex; align-items: center; gap: 10px; cursor: pointer; border-left: 3px solid transparent; font-size: 13px; transition: background 0.15s; }
     .request-item:hover { background: var(--bg-hover); }
     .request-item.active { background: var(--bg-hover); border-left-color: var(--postman-orange); font-weight: 600; }
-    
+
     /* Method Badges */
     .badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 3px; min-width: 52px; text-align: center; text-transform: uppercase; }
     .badge-get { color: var(--method-get); background: rgba(12, 187, 82, 0.15); }
@@ -847,10 +851,10 @@ function createApp() {
     .request-card-title { font-size: 18px; font-weight: 600; color: #FFF; }
     .url-bar { background: var(--bg-dark); border: 1px solid var(--border-color); padding: 10px 14px; border-radius: 6px; font-family: monospace; font-size: 13px; color: #FFF; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; word-break: break-all; }
     .request-card-desc { color: var(--text-muted); font-size: 14px; white-space: pre-wrap; margin-bottom: 20px; line-height: 1.5; }
-    
+
     .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin: 16px 0 8px; letter-spacing: 0.5px; }
     .code-block { background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 14px; font-family: monospace; font-size: 13px; color: #7DD3FC; overflow-x: auto; white-space: pre-wrap; }
-    
+
     /* Table */
     table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
     th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
@@ -896,7 +900,7 @@ function createApp() {
           <span>${item.request.url.raw}</span>
         </div>
         ${item.request.description ? `<div class="request-card-desc">${item.request.description}</div>` : ''}
-        
+
         ${item.request.header && item.request.header.length > 0 ? `
           <div class="section-title">Headers</div>
           <table>
@@ -988,7 +992,6 @@ function createApp() {
     },
     gracefulShutdown(opts = {}) {
       const shutdown = () => {
-        console.log('[velociradix] graceful shutdown initiated...');
         app.close();
         if (opts.onShutdown) opts.onShutdown();
         process.exit(0);
@@ -1048,7 +1051,7 @@ function createApp() {
         result = runChain(chain, entry.handler, ctx);
       }
     } catch (err) {
-      emitter.emit('error', err, ctx);
+      if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
       if (onErr) { onErrorAsync(onErr, err, ctx); return; }
       const status = err instanceof HttpError ? err.status : 500;
       respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
@@ -1062,7 +1065,7 @@ function createApp() {
         else respondValue(ctx, ctx.statusCode, v);
       }, (err) => {
         if (ctx.done) return;
-        emitter.emit('error', err, ctx);
+        if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
         if (onErr) { onErrorAsync(onErr, err, ctx); return; }
         const status = err instanceof HttpError ? err.status : 500;
         respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
@@ -1079,8 +1082,12 @@ function createApp() {
     ctx.statusCode = status;
     Promise.resolve()
       .then(() => fn(err, ctx))
-      .then((r) => { if (!ctx.done) respondValue(ctx, status, r ?? {}); })
-      .catch((e2) => { if (!ctx.done) respondRes(ctx, 500, String((e2 && e2.message) || e2)); });
+      .then((r) => (!ctx.done ? respondValue(ctx, status, r ?? {}) : null))
+      .catch((e2) =>
+        !ctx.done
+          ? respondRes(ctx, 500, String((e2 && e2.message) || e2))
+          : null,
+      );
   }
 
   native.registerDispatch(h, dispatch);
@@ -1109,31 +1116,31 @@ const middlewares = {
 
 export {
   app,
+  BadRequestError,
+  bearerAuthMiddleware as bearerAuth,
+  cacheMiddleware as cache,
+  compressMiddleware as compress,
+  corsMiddleware as cors,
   createApp,
+  csrfMiddleware as csrf,
+  decryptValue,
+  encryptValue,
+  ForbiddenError,
+  helmetMiddleware as helmet,
+  HttpError,
+  InternalServerError,
+  jwtAuthMiddleware as jwtAuth,
   jwtSign,
   jwtVerify,
-  encryptValue,
-  decryptValue,
-  HttpError,
-  BadRequestError,
-  UnauthorizedError,
-  ForbiddenError,
-  NotFoundError,
-  InternalServerError,
   loggerMiddleware as logger,
-  corsMiddleware as cors,
-  bearerAuthMiddleware as bearerAuth,
-  jwtAuthMiddleware as jwtAuth,
-  compressMiddleware as compress,
-  csrfMiddleware as csrf,
-  cacheMiddleware as cache,
+  NotFoundError,
+  rateLimitMiddleware as rateLimit,
   requestIdMiddleware as requestId,
-  validateMiddleware as validate,
   sanitizeMiddleware as sanitize,
   sessionMiddleware as session,
   slowDownMiddleware as slowDown,
-  rateLimitMiddleware as rateLimit,
-  helmetMiddleware as helmet,
+  UnauthorizedError,
+  validateMiddleware as validate,
 };
 
 export default {

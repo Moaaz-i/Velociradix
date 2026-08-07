@@ -110,12 +110,12 @@ int main() {
     });
 
     app.get("/headers", [](Context& ctx) {
-        const std::string* h = ctx.req.header("x-test");
-        ctx.json(json::object({{"h", json::string(h ? *h : "")}}));
+        std::string_view h = ctx.req.header("x-test");
+        ctx.json(json::object({{"h", json::string(std::string(h))}}));
     });
 
     app.post("/echo", [](Context& ctx) {
-        ctx.json(json::object({{"body", json::string(ctx.req.body)}}));
+        ctx.json(json::object({{"body", json::string(std::string(ctx.req.body))}}));
     });
 
     app.get("/redir", [](Context& ctx) {

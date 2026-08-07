@@ -149,7 +149,6 @@ app
       await run();
     } catch (e) {
       console.error("FAILED", e);
-      unlinkSync(tempFile);
       process.exit(1);
     }
   });
@@ -216,10 +215,18 @@ async function run() {
   console.log("GET /cached-endpoint (c1 == c2) ->", c1.text === c2.text);
 
   // Custom HTTP Error test
+  console.log("Sending GET /bad-request-test...");
   const badReq = await j("/bad-request-test");
   console.log("GET /bad-request-test ->", badReq.status, badReq.text);
 
+  console.log("Closing app...");
   app.close();
-  unlinkSync(tempFile);
   process.exit(0);
 }
+
+// also remove from catch block:
+// app.listen ...
+//  } catch (e) {
+//    console.error("FAILED", e);
+//    process.exit(1);
+//  }

@@ -194,7 +194,7 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
             size_t pl = prefix.size();
             if (ctx.req.path.rfind(prefix, 0) != 0) continue;
             if (ctx.req.path.size() != pl && ctx.req.path[pl] != '/') continue;
-            std::string rest = ctx.req.path.substr(pl);
+            std::string rest = std::string(ctx.req.path.substr(pl));
             while (!rest.empty() && rest[0] == '/') rest.erase(0, 1);
             if (rest.find("..") != std::string::npos) continue; // traversal guard
             std::string full = base + "/" + rest;
@@ -211,11 +211,14 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
     pc->seq = a->app->alloc_seq(ctx.conn);
     pc->keep_alive = ctx.req.keep_alive();
     pc->route_id = route_id;
-    pc->method = ctx.req.method;
-    pc->path = ctx.req.path;
-    pc->query = ctx.req.query_string;
-    pc->body = ctx.req.body;
-    pc->headers = ctx.req.headers;
+    pc->method = std::string(ctx.req.method);
+    pc->path = std::string(ctx.req.path);
+    pc->query = std::string(ctx.req.query_string);
+    pc->body = std::string(ctx.req.body);
+    pc->headers.reserve(ctx.req.headers.size());
+    for (const auto& h : ctx.req.headers) {
+        pc->headers.emplace_back(std::string(h.first), std::string(h.second));
+    }
     for (const auto& kv : ctx.params) {
         pc->param_names.push_back(kv.first);
         pc->param_values.push_back(kv.second);

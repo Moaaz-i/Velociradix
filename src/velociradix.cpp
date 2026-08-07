@@ -11,10 +11,27 @@
 #include <mutex>
 #include <sstream>
 #ifdef _WIN32
+#ifndef FD_SETSIZE
+#define FD_SETSIZE 1024
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <io.h>
 #pragma comment(lib, "ws2_32.lib")
 typedef int socklen_t;
+typedef intptr_t ssize_t;
+
+struct WSAInit {
+    WSAInit() {
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+    }
+    ~WSAInit() {
+        WSACleanup();
+    }
+};
+static WSAInit g_wsa_init;
+
 #else
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -28,10 +45,14 @@ typedef int socklen_t;
 #ifdef __APPLE__
 #include <sys/event.h>
 #include <sys/time.h>
+#include <mach/thread_policy.h>
+#include <mach/thread_act.h>
 #elif defined(_WIN32)
 // Windows socket polling fallback
 #else
 #include <sys/epoll.h>
+#include <sched.h>
+#include <pthread.h>
 #endif
 
 #ifndef MSG_NOSIGNAL
@@ -207,81 +228,83 @@ static void ignore_sigpipe() {
     std::call_once(once, [] { std::signal(SIGPIPE, SIG_IGN); });
 }
 
-static const std::string* find_header(const Request& req, const char* name) {
+static std::string_view find_header(const Request& req, std::string_view name) {
     for (const auto& h : req.headers) {
-        if (h.first == name) return &h.second;
+        if (h.first == name) return h.second;
     }
-    return nullptr;
+    return {};
 }
 
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
-const std::string* Request::header(const std::string& name) const {
-    return find_header(*this, name.c_str());
+std::string_view Request::header(std::string_view name) const {
+    return find_header(*this, name);
 }
 
-std::string Request::query(const std::string& key) const {
-    auto it = query_cache.find(key);
+std::string Request::query(std::string_view key) const {
+    std::string key_str(key);
+    auto it = query_cache.find(key_str);
     if (it != query_cache.end()) return it->second;
     std::string value;
     if (!query_string.empty()) {
         size_t i = 0;
         while (i <= query_string.size()) {
             size_t amp = query_string.find('&', i);
-            size_t end = (amp == std::string::npos) ? query_string.size() : amp;
+            size_t end = (amp == std::string_view::npos) ? query_string.size() : amp;
             if (end > i) {
                 size_t eq = query_string.find('=', i);
-                if (eq != std::string::npos && eq < end) {
-                    std::string k = url_decode(query_string.substr(i, eq - i));
+                if (eq != std::string_view::npos && eq < end) {
+                    std::string k = url_decode(std::string(query_string.substr(i, eq - i)));
                     if (k == key) {
-                        value = url_decode(query_string.substr(eq + 1, end - eq - 1));
+                        value = url_decode(std::string(query_string.substr(eq + 1, end - eq - 1)));
                         break;
                     }
                 }
             }
-            if (amp == std::string::npos) break;
+            if (amp == std::string_view::npos) break;
             i = amp + 1;
         }
     }
-    query_cache[key] = value;
+    query_cache[key_str] = value;
     return value;
 }
 
-std::string Request::cookie(const std::string& key) const {
-    auto it = cookie_cache.find(key);
+std::string Request::cookie(std::string_view key) const {
+    std::string key_str(key);
+    auto it = cookie_cache.find(key_str);
     if (it != cookie_cache.end()) return it->second;
     std::string value;
-    const std::string* chdr = find_header(*this, "cookie");
-    if (chdr && !chdr->empty()) {
+    std::string_view chdr = find_header(*this, "cookie");
+    if (!chdr.empty()) {
         size_t i = 0;
-        while (i <= chdr->size()) {
-            size_t semi = chdr->find(';', i);
-            size_t end = (semi == std::string::npos) ? chdr->size() : semi;
-            size_t eq = chdr->find('=', i);
-            if (eq != std::string::npos && eq < end) {
-                std::string k(*chdr, i, eq - i);
-                while (!k.empty() && (k.front() == ' ' || k.front() == '\t')) k.erase(0, 1);
-                while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+        while (i <= chdr.size()) {
+            size_t semi = chdr.find(';', i);
+            size_t end = (semi == std::string_view::npos) ? chdr.size() : semi;
+            size_t eq = chdr.find('=', i);
+            if (eq != std::string_view::npos && eq < end) {
+                std::string_view k = chdr.substr(i, eq - i);
+                while (!k.empty() && (k.front() == ' ' || k.front() == '\t')) k.remove_prefix(1);
+                while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.remove_suffix(1);
                 if (k == key) {
-                    value = url_decode(std::string(*chdr, eq + 1, end - eq - 1));
+                    value = url_decode(std::string(chdr.substr(eq + 1, end - eq - 1)));
                     break;
                 }
             }
-            if (semi == std::string::npos) break;
+            if (semi == std::string_view::npos) break;
             i = semi + 1;
         }
     }
-    cookie_cache[key] = value;
+    cookie_cache[key_str] = value;
     return value;
 }
 
 bool Request::keep_alive() const {
-    const std::string* conn = find_header(*this, "connection");
+    std::string_view conn = find_header(*this, "connection");
     if (http_version == "HTTP/1.0") {
-        return conn && conn->find("keep-alive") != std::string::npos;
+        return !conn.empty() && conn.find("keep-alive") != std::string_view::npos;
     }
-    if (conn) return conn->find("close") == std::string::npos;
+    if (!conn.empty()) return conn.find("close") == std::string_view::npos;
     return true;
 }
 
@@ -343,42 +366,39 @@ void Context::redirect(const std::string& location, int code) {
 // HTTP request parser
 // Returns bytes consumed; 0 = need more data; -1 = malformed.
 // ---------------------------------------------------------------------------
-static long parse_request(const char* data, size_t len, Request& req) {
+static long parse_request(char* data, size_t len, Request& req) {
     if (len < 4) return 0;
-    const char* he = nullptr;
-    for (size_t i = 0; i + 3 < len; ++i) {
-        if (data[i] == '\r' && data[i + 1] == '\n' &&
-            data[i + 2] == '\r' && data[i + 3] == '\n') {
-            he = data + i;
-            break;
-        }
-    }
-    if (!he) return 0; // incomplete header
-
+    
+    std::string_view sv(data, len);
+    size_t header_end_pos = sv.find("\r\n\r\n");
+    if (header_end_pos == std::string_view::npos) return 0; // incomplete header
+    
+    const char* he = data + header_end_pos;
     const char* end = he;
     // request line: METHOD SP TARGET SP VERSION
     const char* p = data;
     const char* sp1 = (const char*)memchr(p, ' ', (size_t)(end - p));
     if (!sp1) return -1;
-    req.method.assign(p, sp1 - p);
+    req.method = std::string_view(p, sp1 - p);
     p = sp1 + 1;
     const char* sp2 = (const char*)memchr(p, ' ', (size_t)(end - p));
     if (!sp2) return -1;
     const char* ts = p;
     const char* qmark = (const char*)memchr(ts, '?', (size_t)(sp2 - ts));
     if (qmark) {
-        req.path.assign(ts, qmark - ts);
-        req.query_string.assign(qmark + 1, (sp2 - qmark) - 1);
+        req.path = std::string_view(ts, qmark - ts);
+        req.query_string = std::string_view(qmark + 1, (sp2 - qmark) - 1);
     } else {
-        req.path.assign(ts, sp2 - ts);
+        req.path = std::string_view(ts, sp2 - ts);
+        req.query_string = std::string_view();
     }
     p = sp2 + 1;
     const char* le = (const char*)memchr(p, '\r', (size_t)(end - p));
     if (!le) return -1;
-    req.http_version.assign(p, le - p);
+    req.http_version = std::string_view(p, le - p);
 
     // headers
-    const char* h = le + 2;
+    char* h = const_cast<char*>(le + 2);
     while (h < end) {
         // The last header line's '\r' sits exactly at `end`, so the search range
         // must include `end` itself.
@@ -386,16 +406,19 @@ static long parse_request(const char* data, size_t len, Request& req) {
         if (!line_end || line_end[1] != '\n') return -1;
         const char* colon = (const char*)memchr(h, ':', (size_t)(line_end - h));
         if (colon) {
-            std::string name(h, colon - h);
-            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
-            to_lower(name);
+            size_t name_len = colon - h;
+            for (size_t k = 0; k < name_len; ++k) h[k] = (char)std::tolower((unsigned char)h[k]);
+            std::string_view name(h, name_len);
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.remove_suffix(1);
+
             const char* vs = colon + 1;
             while (vs < line_end && (*vs == ' ' || *vs == '\t')) ++vs;
-            std::string value(vs, line_end - vs);
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.pop_back();
-            req.headers.emplace_back(std::move(name), std::move(value));
+            std::string_view value(vs, line_end - vs);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
+            
+            req.headers.emplace_back(name, value);
         }
-        h = line_end + 2;
+        h = const_cast<char*>(line_end + 2);
     }
 
     // body
@@ -403,7 +426,8 @@ static long parse_request(const char* data, size_t len, Request& req) {
     for (const auto& hd : req.headers) {
         if (hd.first == "content-length") {
             try {
-                content_length = (size_t)std::stoul(hd.second);
+                // std::stoul requires null terminated, but string_view isn't. So we copy it.
+                content_length = (size_t)std::stoul(std::string(hd.second));
             } catch (...) {
                 return -1;
             }
@@ -413,7 +437,7 @@ static long parse_request(const char* data, size_t len, Request& req) {
     }
     size_t consumed = (size_t)(end - data) + 4;
     if (consumed + content_length > len) return 0; // need body
-    req.body.assign(data + consumed, content_length);
+    req.body = std::string_view(data + consumed, content_length);
     return (long)(consumed + content_length);
 }
 
@@ -585,9 +609,26 @@ struct ev_event {
     bool err;
 };
 
+#ifdef _WIN32
+struct WinLoop {
+    std::mutex mtx;
+    fd_set read_fds;
+    fd_set write_fds;
+    int max_fd = 0;
+    
+    WinLoop() {
+        FD_ZERO(&read_fds);
+        FD_ZERO(&write_fds);
+    }
+};
+static WinLoop* get_loop(int loop) { return (WinLoop*)(intptr_t)loop; }
+#endif
+
 static int ev_create() {
 #ifdef __APPLE__
     return kqueue();
+#elif defined(_WIN32)
+    return (int)(intptr_t)new WinLoop();
 #else
     return epoll_create1(EPOLL_CLOEXEC);
 #endif
@@ -600,6 +641,13 @@ static bool ev_mod(int loop, int fd, bool r, bool w) {
     EV_SET(&ch[n++], fd, EVFILT_READ, EV_ADD | (r ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
     EV_SET(&ch[n++], fd, EVFILT_WRITE, EV_ADD | (w ? EV_ENABLE : EV_DISABLE), 0, 0, nullptr);
     return kevent(loop, ch, n, nullptr, 0, nullptr) >= 0;
+#elif defined(_WIN32)
+    WinLoop* wl = get_loop(loop);
+    std::lock_guard<std::mutex> lk(wl->mtx);
+    if (r) FD_SET((SOCKET)fd, &wl->read_fds); else FD_CLR((SOCKET)fd, &wl->read_fds);
+    if (w) FD_SET((SOCKET)fd, &wl->write_fds); else FD_CLR((SOCKET)fd, &wl->write_fds);
+    if (fd > wl->max_fd) wl->max_fd = fd;
+    return true;
 #else
     struct epoll_event e{};
     e.events = (r ? EPOLLIN : 0) | (w ? EPOLLOUT : 0);
@@ -615,6 +663,8 @@ static bool ev_add(int loop, int fd, bool r, bool w) {
     if (r) EV_SET(&ch[n++], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, nullptr);
     if (w) EV_SET(&ch[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE, 0, 0, nullptr);
     return n > 0 && kevent(loop, ch, n, nullptr, 0, nullptr) >= 0;
+#elif defined(_WIN32)
+    return ev_mod(loop, fd, r, w);
 #else
     struct epoll_event e{};
     e.events = (r ? EPOLLIN : 0) | (w ? EPOLLOUT : 0);
@@ -634,6 +684,32 @@ static int ev_wait(int loop, ev_event* evs, int max) {
         evs[i].write = (out[i].filter == EVFILT_WRITE);
     }
     return n;
+#elif defined(_WIN32)
+    WinLoop* wl = get_loop(loop);
+    fd_set r, w;
+    int max_fd;
+    {
+        std::lock_guard<std::mutex> lk(wl->mtx);
+        r = wl->read_fds;
+        w = wl->write_fds;
+        max_fd = wl->max_fd;
+    }
+    int n = select(max_fd + 1, &r, &w, nullptr, nullptr);
+    if (n <= 0) return n;
+    
+    int count = 0;
+    for (int i = 0; i <= max_fd && count < max; ++i) {
+        bool is_r = FD_ISSET((SOCKET)i, &r);
+        bool is_w = FD_ISSET((SOCKET)i, &w);
+        if (is_r || is_w) {
+            evs[count].fd = i;
+            evs[count].err = false;
+            evs[count].read = is_r;
+            evs[count].write = is_w;
+            count++;
+        }
+    }
+    return count;
 #else
     struct epoll_event out[256];
     int n = epoll_wait(loop, out, std::min(max, 256), -1);
@@ -647,6 +723,79 @@ static int ev_wait(int loop, ev_event* evs, int max) {
 #endif
 }
 
+static int make_wake_pipe(int fds[2]) {
+#ifdef _WIN32
+    SOCKET listener = socket(AF_INET, SOCK_DGRAM, 0);
+    if (listener == INVALID_SOCKET) return -1;
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(listener, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+    int len = sizeof(addr);
+    getsockname(listener, (struct sockaddr*)&addr, &len);
+    
+    SOCKET sender = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sender == INVALID_SOCKET) {
+        closesocket(listener);
+        return -1;
+    }
+    if (connect(sender, (struct sockaddr*)&addr, len) == SOCKET_ERROR) {
+        closesocket(listener);
+        closesocket(sender);
+        return -1;
+    }
+    fds[0] = (int)listener;
+    fds[1] = (int)sender;
+    return 0;
+#else
+    return ::pipe(fds);
+#endif
+}
+
+static int sys_write(int fd, const void* buf, size_t count) {
+#ifdef _WIN32
+    return send((SOCKET)fd, (const char*)buf, (int)count, 0);
+#else
+    return ::write(fd, buf, count);
+#endif
+}
+
+static int sys_read(int fd, void* buf, size_t count) {
+#ifdef _WIN32
+    return recv((SOCKET)fd, (char*)buf, (int)count, 0);
+#else
+    return ::read(fd, buf, count);
+#endif
+}
+
+static int sys_read_file(int fd, void* buf, size_t count) {
+#ifdef _WIN32
+    return _read(fd, buf, (unsigned int)count);
+#else
+    return ::read(fd, buf, count);
+#endif
+}
+
+static void sys_close(int fd) {
+#ifdef _WIN32
+    closesocket((SOCKET)fd);
+#else
+    ::close(fd);
+#endif
+}
+
+static void sys_close_file(int fd) {
+#ifdef _WIN32
+    _close(fd);
+#else
+    ::close(fd);
+#endif
+}
+
 struct App::Worker {
     App* app;
     int loop_fd = -1;
@@ -656,7 +805,13 @@ struct App::Worker {
 
     explicit Worker(App* a, int lfd) : app(a), listen_fd(lfd) {}
 
-    void request_write(int fd) { ev_mod(loop_fd, fd, true, true); }
+    void request_write(int fd) { 
+        ev_mod(loop_fd, fd, true, true); 
+#ifdef _WIN32
+        char notify = 'W';
+        sys_write(wake_pipe[1], &notify, 1);
+#endif
+    }
     void request_write_off(int fd) { ev_mod(loop_fd, fd, true, false); }
 
     void run() {
@@ -664,7 +819,7 @@ struct App::Worker {
 
         loop_fd = ev_create();
         if (loop_fd < 0) return;
-        if (::pipe(wake_pipe) < 0) { ::close(loop_fd); return; }
+        if (make_wake_pipe(wake_pipe) < 0) { sys_close(loop_fd); return; }
         set_nonblocking(wake_pipe[0]);
 
         {
@@ -686,7 +841,7 @@ struct App::Worker {
                 ev_event& e = events[i];
                 if (e.fd == wake_pipe[0]) {
                     char junk[128];
-                    while (::read(wake_pipe[0], junk, sizeof(junk)) > 0) {}
+                    while (sys_read(wake_pipe[0], junk, sizeof(junk)) > 0) {}
                     continue;
                 }
                 if (e.fd == listen_fd) {
@@ -713,13 +868,13 @@ struct App::Worker {
 
         for (auto& kv : conns) {
             kv.second->closed = true;
-            ::close(kv.first);
+            sys_close(kv.first);
             if (--kv.second->refs == 0) delete kv.second;
         }
         conns.clear();
-        ::close(listen_fd);
-        ::close(wake_pipe[0]);
-        ::close(loop_fd);
+        sys_close(listen_fd);
+        sys_close(wake_pipe[0]);
+        sys_close(loop_fd);
     }
 
     void accept_loop() {
@@ -745,7 +900,7 @@ struct App::Worker {
     void on_readable(int fd, Conn* c) {
         char buf[16384];
         for (;;) {
-            ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            ssize_t n = sys_read(fd, buf, sizeof(buf));
             if (n > 0) {
                 c->in.append(buf, (size_t)n);
                 if (c->in.size() > app->payload_limit_) { // max request body
@@ -778,7 +933,7 @@ struct App::Worker {
         static thread_local Request scratch;
         for (;;) {
             if (c->streaming) break;
-            const char* data = c->in.data() + c->consumed;
+            char* data = c->in.data() + c->consumed;
             size_t avail = c->in.size() - c->consumed;
             if (avail == 0) break;
 
@@ -823,7 +978,7 @@ struct App::Worker {
         std::unique_lock<std::mutex> lk(c->wmtx);
         if (c->closed) return;
         while (!c->out.empty()) {
-            ssize_t n = ::send(c->fd, c->out.data(), c->out.size(), MSG_NOSIGNAL);
+            ssize_t n = sys_write(c->fd, c->out.data(), c->out.size());
             if (n > 0) {
                 c->out.erase(0, (size_t)n);
                 continue;
@@ -849,7 +1004,7 @@ struct App::Worker {
     void close_conn(int fd, Conn* c) {
         conns.erase(fd);
         c->closed = true;
-        ::close(fd);
+        sys_close(fd);
         if (--c->refs == 0) delete c;
     }
 };
@@ -949,13 +1104,13 @@ void Context::serve_file(const std::string& filepath) {
     }
     struct stat st{};
     if (fstat(fd, &st) < 0 || S_ISDIR(st.st_mode)) {
-        ::close(fd);
+        sys_close(fd);
         res.status = 404;
         json(json::object({{"error", json::string("Not Found")}}));
         return;
     }
     if (st.st_size > (off_t)(64 * 1024 * 1024)) {
-        ::close(fd);
+        sys_close(fd);
         res.status = 413;
         json(json::object({{"error", json::string("File too large")}}));
         return;
@@ -963,11 +1118,11 @@ void Context::serve_file(const std::string& filepath) {
     std::string data((size_t)st.st_size, '\0');
     size_t got = 0;
     while (got < data.size()) {
-        ssize_t r = ::read(fd, data.data() + got, data.size() - got);
+        ssize_t r = sys_read_file(fd, data.data() + got, data.size() - got);
         if (r <= 0) break;
         got += (size_t)r;
     }
-    ::close(fd);
+    sys_close_file(fd);
     res.set_header("content-type", mime_for(filepath));
     res.body = std::move(data);
     ended = true;
@@ -1052,35 +1207,32 @@ RouteGroup& RouteGroup::del(const std::string& p, Handler h, std::vector<Middlew
     return *this;
 }
 
-static int make_listen_socket(int port, const std::string& host) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) throw std::runtime_error("socket() failed");
-    int opt = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-#ifdef SO_REUSEPORT
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
-#endif
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-    if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        ::close(fd);
-        throw std::runtime_error("invalid host: " + host);
-    }
-    if (::bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        ::close(fd);
-        throw std::runtime_error("bind(" + host + ":" + std::to_string(port) + ") failed");
-    }
-    if (::listen(fd, 1024) < 0) {
-        ::close(fd);
-        throw std::runtime_error("listen() failed");
-    }
-    set_nonblocking(fd);
-    return fd;
-}
-
 void App::listen(int port, const std::string& host) {
     ignore_sigpipe();
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) return;
+
+    int opt = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+
+    if (::bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        sys_close(listen_fd);
+        throw std::runtime_error("velociradix: bind() failed");
+    }
+    if (::listen(listen_fd, 4096) < 0) {
+        sys_close(listen_fd);
+        throw std::runtime_error("velociradix: listen() failed");
+    }
+    set_nonblocking(listen_fd);
+
     running_.store(true);
 
     size_t nw = workers_n_;
@@ -1089,15 +1241,21 @@ void App::listen(int port, const std::string& host) {
         nw = (hw > 0) ? hw : 1;
     }
 
-    std::vector<int> listen_fds;
-    listen_fds.reserve(nw);
     for (size_t i = 0; i < nw; ++i) {
-        listen_fds.push_back(make_listen_socket(port, host));
-    }
-
-    for (size_t i = 0; i < nw; ++i) {
-        threads_.emplace_back([this, fd = listen_fds[i]]() {
-            Worker w(this, fd);
+        threads_.emplace_back([this, listen_fd, i]() {
+#if defined(__linux__)
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(i % std::thread::hardware_concurrency(), &cpuset);
+            pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+#elif defined(__APPLE__)
+            thread_affinity_policy_data_t policy = { (int)i };
+            thread_policy_set(pthread_mach_thread_np(pthread_self()),
+                              THREAD_AFFINITY_POLICY,
+                              (thread_policy_t)&policy,
+                              THREAD_AFFINITY_POLICY_COUNT);
+#endif
+            Worker w(this, listen_fd);
             w.run();
         });
     }
@@ -1107,7 +1265,7 @@ void App::listen(int port, const std::string& host) {
 
     {
         std::lock_guard<std::mutex> lk(wake_mutex_);
-        for (int fd : wake_fds_) ::close(fd);
+        for (int fd : wake_fds_) sys_close(fd);
         wake_fds_.clear();
     }
     running_.store(false);
@@ -1147,11 +1305,11 @@ void App::handle_request(Conn* c, Request& req) {
     }
 
     static thread_local std::vector<std::string> segs;
-    split_path(req.path, segs);
+    split_path(std::string(req.path), segs);
     Handler handler;
     std::vector<Middleware> route_mws;
     std::unordered_map<std::string, std::string> params;
-    bool found = match_route(root_, req.method, segs, 0, handler, route_mws, params);
+    bool found = match_route(root_, std::string(req.method), segs, 0, handler, route_mws, params);
 
     if (found) {
         ctx.params = std::move(params);
@@ -1171,7 +1329,7 @@ void App::handle_request(Conn* c, Request& req) {
         if (!ctx.ended) ctx.send("");
     } else if (!static_dir_.empty() && req.method == "GET") {
         try {
-            ctx.serve_file(static_dir_ + req.path);
+            ctx.serve_file(static_dir_ + std::string(req.path));
         } catch (...) {
             res.status = 500;
             ctx.json(json::object({{"error", json::string("Internal Server Error")}}));

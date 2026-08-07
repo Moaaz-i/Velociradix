@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -25,18 +26,18 @@ inline std::string number(long long n) { return std::to_string(n); }
 } // namespace json
 
 struct Request {
-    std::string method;
-    std::string path;         // without query string
-    std::string query_string; // raw "a=1&b=2"
-    std::string http_version; // "HTTP/1.1"
-    std::string body;
+    std::string_view method;
+    std::string_view path;         // without query string
+    std::string_view query_string; // raw "a=1&b=2"
+    std::string_view http_version; // "HTTP/1.1"
+    std::string_view body;
 
-    const std::string* header(const std::string& name) const; // lowercase name
-    std::string query(const std::string& key) const;
-    std::string cookie(const std::string& key) const;
+    std::string_view header(std::string_view name) const; // lowercase name
+    std::string query(std::string_view key) const;
+    std::string cookie(std::string_view key) const;
     bool keep_alive() const;
 
-    std::vector<std::pair<std::string, std::string>> headers; // lowercase names
+    std::vector<std::pair<std::string_view, std::string_view>> headers; // lowercase names
     mutable std::unordered_map<std::string, std::string> query_cache;
     mutable std::unordered_map<std::string, std::string> cookie_cache;
 };
@@ -87,8 +88,8 @@ struct Context {
     void redirect(const std::string& location, int code = 302);
     void sse(const std::function<void(SseStream&)>& producer);
     void serve_file(const std::string& filepath);
-    std::string query(const std::string& key) const { return req.query(key); }
-    std::string cookie(const std::string& key) const { return req.cookie(key); }
+    std::string query(std::string_view key) const { return req.query(key); }
+    std::string cookie(std::string_view key) const { return req.cookie(key); }
 };
 
 using Handler = std::function<void(Context&)>;
