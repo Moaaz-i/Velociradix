@@ -20,6 +20,16 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#ifndef R_OK
+#define R_OK 4
+#endif
+#define access _access
+#else
+#include <unistd.h>
+#endif
+
 #define NAPI_CALL(env, call) \
     do { if ((call) != napi_ok) { napi_throw_error((env), nullptr, #call); return nullptr; } } while (0)
 
