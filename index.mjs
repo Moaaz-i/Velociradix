@@ -110,7 +110,16 @@ function decryptValue(encryptedText, secretKey) {
 // --- Request & Context Classes ---
 class Request {
   constructor(ptr) {
+    this._reset(ptr);
+  }
+  _reset(ptr) {
     this._ptr = ptr;
+    delete this.method;
+    delete this.path;
+    delete this.query;
+    delete this.body;
+    delete this.headers;
+    delete this.params;
   }
   get method() { return cacheField(this, 'method', native.getMethod); }
   get url() { return this.path; }
@@ -127,20 +136,54 @@ function cacheField(obj, key, getter) {
   return v;
 }
 
+const MAX_POOL_SIZE = 8192;
+const contextPool = [];
+
+function acquireContext(ptr, appInstance) {
+  if (contextPool.length > 0) {
+    const ctx = contextPool.pop();
+    ctx._reset(ptr, appInstance);
+    return ctx;
+  }
+  return new Context(ptr, appInstance);
+}
+
+function releaseContext(ctx) {
+  if (ctx._sse) return;
+  if (contextPool.length < MAX_POOL_SIZE) {
+    ctx._ptr = 0;
+    ctx._app = null;
+    ctx.statusCode = 200;
+    ctx.done = false;
+    ctx._headers = undefined;
+    ctx._state = undefined;
+    ctx._timers = undefined;
+    ctx._session = undefined;
+    if (ctx._req) ctx._req._reset(0);
+    contextPool.push(ctx);
+  }
+}
+
 class Context {
   constructor(ptr, appInstance) {
+    this._req = new Request(ptr);
+    this._reset(ptr, appInstance);
+  }
+
+  _reset(ptr, appInstance) {
     this._ptr = ptr;
     this._app = appInstance;
     this.statusCode = 200;
     this.done = false;
     this._headers = undefined;
-    this._req = undefined;
     this._state = undefined;
     this._timers = undefined;
     this._session = undefined;
+    this._sse = false;
+    this._req._reset(ptr);
   }
 
-  get req() { return this._req ??= new Request(this._ptr); }
+  get req() { return this._req; }
   get res() { return this; }
   status(c) { this.statusCode = c; return this; }
   setHeader(k, v) { (this._headers ??= {})[k] = String(v); return this; }
@@ -209,8 +252,18 @@ class Context {
   cache(seconds) { return this.setHeader('Cache-Control', `public, max-age=${seconds}`); }
   get(name) {
     if (!name) return undefined;
-    const hdrs = this.req.headers;
-    return hdrs[name.toLowerCase()] ?? hdrs[name];
+    if (Object.prototype.hasOwnProperty.call(this._req, 'headers')) {
+      const hdrs = this._req.headers;
+      return hdrs[name.toLowerCase()] ?? hdrs[name];
+    }
+    return native.getHeader(this._ptr, name);
+  }
+  param(k) {
+    if (!k) return undefined;
+    if (Object.prototype.hasOwnProperty.call(this._req, 'params')) {
+      return this._req.params[k];
+    }
+    return native.getParam(this._ptr, k);
   }
   query(k) { return queryParse(this.req.query)[k]; }
   cookie(k) { return cookieParse(this.req.headers.cookie)[k]; }
@@ -1040,7 +1093,7 @@ function createApp() {
 
   const dispatch = (routeId, ptr) => {
     const entry = routes[routeId];
-    const ctx = new Context(ptr, app);
+    const ctx = acquireContext(ptr, app);
     emitter.emit('request', ctx);
     let result;
     try {
@@ -1055,25 +1108,33 @@ function createApp() {
       if (onErr) { onErrorAsync(onErr, err, ctx); return; }
       const status = err instanceof HttpError ? err.status : 500;
       respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
+      releaseContext(ctx);
       return;
     }
     if (result && typeof result.then === 'function') {
       result.then((v) => {
-        if (ctx.done) return;
-        emitter.emit('response', ctx);
-        if (v === undefined) respondRes(ctx, ctx.statusCode, '');
-        else respondValue(ctx, ctx.statusCode, v);
+        if (!ctx.done) {
+          emitter.emit('response', ctx);
+          if (v === undefined) respondRes(ctx, ctx.statusCode, '');
+          else respondValue(ctx, ctx.statusCode, v);
+        }
+        releaseContext(ctx);
       }, (err) => {
-        if (ctx.done) return;
-        if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
-        if (onErr) { onErrorAsync(onErr, err, ctx); return; }
-        const status = err instanceof HttpError ? err.status : 500;
-        respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
+        if (!ctx.done) {
+          if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
+          if (onErr) { onErrorAsync(onErr, err, ctx); return; }
+          const status = err instanceof HttpError ? err.status : 500;
+          respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
+        }
+        releaseContext(ctx);
       });
-    } else if (!ctx.done) {
-      emitter.emit('response', ctx);
-      if (result === undefined) respondRes(ctx, ctx.statusCode, '');
-      else respondValue(ctx, ctx.statusCode, result);
+    } else {
+      if (!ctx.done) {
+        emitter.emit('response', ctx);
+        if (result === undefined) respondRes(ctx, ctx.statusCode, '');
+        else respondValue(ctx, ctx.statusCode, result);
+      }
+      releaseContext(ctx);
     }
   };
 
@@ -1087,7 +1148,8 @@ function createApp() {
         !ctx.done
           ? respondRes(ctx, 500, String((e2 && e2.message) || e2))
           : null,
-      );
+      )
+      .finally(() => releaseContext(ctx));
   }
 
   native.registerDispatch(h, dispatch);

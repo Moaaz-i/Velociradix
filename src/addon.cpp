@@ -45,9 +45,9 @@ struct PendingCall {
     bool keep_alive = true;
 
     int route_id = 0;
-    std::string method, path, query, body;
-    std::vector<std::pair<std::string, std::string>> headers;
-    std::vector<std::string> param_names, param_values;
+    std::string_view method, path, query, body;
+    std::vector<std::pair<std::string_view, std::string_view>> headers;
+    std::vector<std::pair<std::string_view, std::string_view>> params;
 
     // Set exactly once, by js_respond (normal) or js_sse_begin (SSE).
     std::atomic<bool> responded{false};
@@ -90,12 +90,12 @@ static std::string js_to_string(napi_env env, napi_value v) {
     return s;
 }
 
-static void mk_string(napi_env env, const std::string& s, napi_value* out) {
+static inline void mk_string(napi_env env, std::string_view s, napi_value* out) {
     napi_create_string_utf8(env, s.data(), s.size(), out);
 }
 
 static napi_status make_string_map(napi_env env,
-                            const std::vector<std::pair<std::string, std::string>>& kv,
+                            const std::vector<std::pair<std::string_view, std::string_view>>& kv,
                             napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;
@@ -109,15 +109,15 @@ static napi_status make_string_map(napi_env env,
     return napi_ok;
 }
 
-static napi_status make_params_map(napi_env env, const std::vector<std::string>& names,
-                            const std::vector<std::string>& values, napi_value* out) {
+static napi_status make_params_map(napi_env env,
+                            const std::vector<std::pair<std::string_view, std::string_view>>& params,
+                            napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;
-    size_t n = std::min(names.size(), values.size());
-    for (size_t i = 0; i < n; ++i) {
+    for (const auto& p : params) {
         napi_value k, v;
-        mk_string(env, names[i], &k);
-        mk_string(env, values[i], &v);
+        mk_string(env, p.first, &k);
+        mk_string(env, p.second, &v);
         st = napi_set_property(env, *out, k, v);
         if (st != napi_ok) return st;
     }
@@ -219,17 +219,17 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
     pc->seq = a->app->alloc_seq(ctx.conn);
     pc->keep_alive = ctx.req.keep_alive();
     pc->route_id = route_id;
-    pc->method = std::string(ctx.req.method);
-    pc->path = std::string(ctx.req.path);
-    pc->query = std::string(ctx.req.query_string);
-    pc->body = std::string(ctx.req.body);
+    pc->method = ctx.req.method;
+    pc->path = ctx.req.path;
+    pc->query = ctx.req.query_string;
+    pc->body = ctx.req.body;
     pc->headers.reserve(ctx.req.headers.size());
     for (const auto& h : ctx.req.headers) {
-        pc->headers.emplace_back(std::string(h.first), std::string(h.second));
+        pc->headers.emplace_back(h.first, h.second);
     }
+    pc->params.reserve(ctx.params.size());
     for (const auto& kv : ctx.params) {
-        pc->param_names.push_back(kv.first);
-        pc->param_values.push_back(kv.second);
+        pc->params.emplace_back(kv.first, kv.second);
     }
 
     // Take over: hold a connection reference so the JS main thread can safely
@@ -281,7 +281,7 @@ static void dispatch_js(napi_env env, napi_value /*js_cb*/, void* context, void*
 // Lazy request accessors (called from JS only while the PendingCall is alive:
 // i.e. before js_respond frees it, which happens after the handler returns).
 // ---------------------------------------------------------------------------
-static napi_value js_get_field(napi_env env, napi_callback_info info, std::string PendingCall::*member) {
+static napi_value js_get_field(napi_env env, napi_callback_info info, std::string_view PendingCall::*member) {
     size_t argc = 1;
     napi_value argv[1];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
@@ -326,8 +326,35 @@ static napi_value js_get_params(napi_env env, napi_callback_info info) {
         return undef;
     }
     napi_value obj;
-    make_params_map(env, pc->param_names, pc->param_values, &obj);
+    make_params_map(env, pc->params, &obj);
     return obj;
+}
+
+static napi_value js_get_param(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    auto* pc = pending_from(env, argv[0]);
+    if (!pc || argc < 2) {
+        napi_value undef;
+        napi_get_undefined(env, &undef);
+        return undef;
+    }
+    char buf[128];
+    size_t len = 0;
+    if (napi_get_value_string_utf8(env, argv[1], buf, sizeof(buf), &len) == napi_ok) {
+        std::string_view name(buf, len);
+        for (const auto& p : pc->params) {
+            if (p.first == name) {
+                napi_value s;
+                mk_string(env, p.second, &s);
+                return s;
+            }
+        }
+    }
+    napi_value undef;
+    napi_get_undefined(env, &undef);
+    return undef;
 }
 
 static napi_value js_get_header(napi_env env, napi_callback_info info) {
@@ -340,12 +367,24 @@ static napi_value js_get_header(napi_env env, napi_callback_info info) {
         napi_get_undefined(env, &undef);
         return undef;
     }
-    std::string name = js_to_string(env, argv[1]);
-    for (const auto& h : pc->headers) {
-        if (h.first == name) {
-            napi_value s;
-            mk_string(env, h.second, &s);
-            return s;
+    char buf[128];
+    size_t len = 0;
+    if (napi_get_value_string_utf8(env, argv[1], buf, sizeof(buf), &len) == napi_ok) {
+        for (const auto& h : pc->headers) {
+            if (h.first.size() == len) {
+                bool match = true;
+                for (size_t i = 0; i < len; ++i) {
+                    if (std::tolower((unsigned char)h.first[i]) != std::tolower((unsigned char)buf[i])) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    napi_value s;
+                    mk_string(env, h.second, &s);
+                    return s;
+                }
+            }
         }
     }
     napi_value undef;
@@ -718,6 +757,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getBody", js_get_body },
         { "getHeaders", js_get_headers },
         { "getParams", js_get_params },
+        { "getParam", js_get_param },
         { "getHeader", js_get_header },
     };
     for (const auto& f : fns) {
