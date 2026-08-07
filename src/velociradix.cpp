@@ -1268,7 +1268,10 @@ void App::listen(int port, const std::string& host) {
     }
 
     for (size_t i = 0; i < nw; ++i) {
-        threads_.emplace_back([this, listen_fd]() {
+        threads_.emplace_back([this, listen_fd, i]() {
+#if defined(_WIN32)
+            (void)i; // Suppress unused capture warning
+#endif
 #if defined(__linux__)
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
