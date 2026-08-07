@@ -80,6 +80,44 @@ async function main() {
   let headers = findHeaders();
   if (!headers) headers = await downloadHeaders();
 
+  if (os.platform() === 'win32') {
+    console.log('[velociradix] Compiling for Windows with clang++...');
+    mkdirSync(path.join(root, 'obj'), { recursive: true });
+    mkdirSync(path.join(root, 'bin'), { recursive: true });
+    
+    // Download node.lib
+    const cacheDir = path.join(os.homedir(), '.node-gyp', verNoV);
+    const nodeLibPath = path.join(cacheDir, 'node.lib');
+    if (!existsSync(nodeLibPath)) {
+      const libUrl = `https://nodejs.org/download/release/${ver}/win-x64/node.lib`;
+      console.log(`[velociradix] downloading ${libUrl}`);
+      const res = await fetch(libUrl);
+      if (!res.ok) throw new Error(`node.lib download failed: HTTP ${res.status}`);
+      writeFileSync(nodeLibPath, Buffer.from(await res.arrayBuffer()));
+    }
+
+    const c1 = spawnSync('clang++', [
+      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src',
+      '-c', '-o', 'obj/velociradix.o', 'src/velociradix.cpp'
+    ], { cwd: root, stdio: 'inherit' });
+    if (c1.status !== 0) process.exit(c1.status ?? 1);
+
+    const c2 = spawnSync('clang++', [
+      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src', '-I', headers,
+      '-c', '-o', 'obj/addon.o', 'src/addon.cpp'
+    ], { cwd: root, stdio: 'inherit' });
+    if (c2.status !== 0) process.exit(c2.status ?? 1);
+
+    const c3 = spawnSync('clang++', [
+      '-shared', '-o', 'bin/velociradix.node',
+      'obj/velociradix.o', 'obj/addon.o', nodeLibPath, '-lws2_32'
+    ], { cwd: root, stdio: 'inherit' });
+    if (c3.status !== 0) process.exit(c3.status ?? 1);
+
+    console.log('[velociradix] native addon built OK');
+    return;
+  }
+
   const r = spawnSync('make', ['-B', `NODE_INC=${headers}`, 'addon'], {
     cwd: root,
     stdio: 'inherit',
