@@ -36,6 +36,7 @@
     "src/main.cpp",
     "src/addon.cpp",
     "scripts/install.mjs",
+    "prebuilds",
     "Makefile",
     "README.md",
     "LICENSE"

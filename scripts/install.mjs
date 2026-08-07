@@ -3,7 +3,7 @@
 // installed from npm. Finds Node headers (repo copy, node-gyp cache, or a fresh
 // download from nodejs.org) and runs `make NODE_INC=<headers> addon`.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,11 +51,32 @@ async function downloadHeaders() {
   throw new Error('Node headers extracted, but node_api.h was not found');
 }
 
+function tryLoadPrebuilt() {
+  const platform = os.platform();
+  const arch = os.arch();
+  const prebuiltPath = path.join(root, 'prebuilds', `${platform}-${arch}`, 'velociradix.node');
+  const targetDir = path.join(root, 'bin');
+  const targetPath = path.join(targetDir, 'velociradix.node');
+
+  if (existsSync(prebuiltPath)) {
+    mkdirSync(targetDir, { recursive: true });
+    copyFileSync(prebuiltPath, targetPath);
+    console.log(`[velociradix] loaded prebuilt native addon for ${platform}-${arch}`);
+    return true;
+  }
+  return false;
+}
+
 async function main() {
   if (process.env.VELOCIRADIX_SKIP_BUILD) {
     console.log('[velociradix] skipping native build (VELOCIRADIX_SKIP_BUILD=1)');
     return;
   }
+
+  if (tryLoadPrebuilt()) {
+    return;
+  }
+
   let headers = findHeaders();
   if (!headers) headers = await downloadHeaders();
 

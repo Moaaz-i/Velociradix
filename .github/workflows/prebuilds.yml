@@ -1,0 +1,58 @@
+name: Build Native Prebuilds
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-prebuilds:
+    name: Build on ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            platform: linux
+          - os: macos-latest
+            arch: arm64
+            platform: darwin
+          - os: macos-13
+            arch: x64
+            platform: darwin
+          - os: windows-latest
+            arch: x64
+            platform: win32
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Native Addon (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          make addon
+          mkdir -p prebuilds/${{ matrix.platform }}-${{ matrix.arch }}
+          cp bin/velociradix.node prebuilds/${{ matrix.platform }}-${{ matrix.arch }}/velociradix.node
+
+      - name: Build Native Addon (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          node scripts/install.mjs
+          mkdir -p prebuilds/win32-x64
+          cp bin/velociradix.node prebuilds/win32-x64/velociradix.node
+        shell: bash
+
+      - name: Upload Prebuild Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.platform }}-${{ matrix.arch }}
+          path: prebuilds/

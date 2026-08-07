@@ -7,21 +7,29 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
 #include <memory>
 #include <mutex>
-#include <netinet/in.h>
 #include <sstream>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int socklen_t;
+#else
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-
 #include <arpa/inet.h>
+#endif
 
 #ifdef __APPLE__
 #include <sys/event.h>
 #include <sys/time.h>
+#elif defined(_WIN32)
+// Windows socket polling fallback
 #else
 #include <sys/epoll.h>
 #endif
