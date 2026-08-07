@@ -20,9 +20,6 @@ jobs:
           - os: macos-latest
             arch: arm64
             platform: darwin
-          - os: macos-13
-            arch: x64
-            platform: darwin
           - os: windows-latest
             arch: x64
             platform: win32
