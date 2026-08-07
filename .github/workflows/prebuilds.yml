@@ -39,7 +39,7 @@ jobs:
       - name: Build Native Addon (Unix)
         if: runner.os != 'Windows'
         run: |
-          make addon
+          node scripts/install.mjs
           mkdir -p prebuilds/${{ matrix.platform }}-${{ matrix.arch }}
           cp bin/velociradix.node prebuilds/${{ matrix.platform }}-${{ matrix.arch }}/velociradix.node
 

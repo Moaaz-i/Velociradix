@@ -96,6 +96,9 @@ async function main() {
       writeFileSync(nodeLibPath, Buffer.from(await res.arrayBuffer()));
     }
 
+    const normHeaders = headers.replaceAll('\\', '/');
+    const normNodeLib = nodeLibPath.replaceAll('\\', '/');
+
     const c1 = spawnSync('clang++', [
       '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src',
       '-c', '-o', 'obj/velociradix.o', 'src/velociradix.cpp'
@@ -103,14 +106,14 @@ async function main() {
     if (c1.status !== 0) process.exit(c1.status ?? 1);
 
     const c2 = spawnSync('clang++', [
-      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src', '-I', headers,
+      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src', '-I', normHeaders,
       '-c', '-o', 'obj/addon.o', 'src/addon.cpp'
     ], { cwd: root, stdio: 'inherit' });
     if (c2.status !== 0) process.exit(c2.status ?? 1);
 
     const c3 = spawnSync('clang++', [
       '-shared', '-o', 'bin/velociradix.node',
-      'obj/velociradix.o', 'obj/addon.o', nodeLibPath, '-lws2_32'
+      'obj/velociradix.o', 'obj/addon.o', normNodeLib, '-lws2_32'
     ], { cwd: root, stdio: 'inherit' });
     if (c3.status !== 0) process.exit(c3.status ?? 1);
 
