@@ -6,9 +6,11 @@
 
 A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS, `epoll` on Linux) with multi-threaded event-loop workers, a C++ Radix Trie router, zero-copy HTTP parsing, and a rich 40-feature JavaScript/TypeScript facade.
 
-> **🚀 Benchmark (500,000 requests, Apple M1):**
+> **🚀 Benchmark (500,000 requests, Apple M1, HTTP Pipelining):**
 > - **JS / TS Addon Facade**: **181.1k req/s** (**2.4x faster than `node:http`**, **4.5x faster than Express**)
 > - **Pure C++ Engine**: **~450k req/s**
+>
+> 💎 **New in v6.0:** 100% Zero-Copy request parsing & CPU Core Affinity (Thread Pinning) effectively doubling raw latency speeds by eliminating V8 garbage collection overhead!
 
 ---
 
