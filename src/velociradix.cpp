@@ -14,12 +14,18 @@
 #include <mutex>
 #include <sstream>
 #ifdef _WIN32
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 #ifndef FD_SETSIZE
 #define FD_SETSIZE 1024
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #pragma comment(lib, "ws2_32.lib")
 typedef int socklen_t;
 typedef intptr_t ssize_t;
