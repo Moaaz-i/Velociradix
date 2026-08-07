@@ -204,7 +204,11 @@ static const char* status_phrase(int code) {
 
 static std::string http_date(time_t t) {
     struct tm tm;
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
     gmtime_r(&t, &tm);
+#endif
     char buf[64];
     std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
     return buf;
@@ -222,13 +226,20 @@ static const std::string& cached_date() {
 }
 
 static bool set_nonblocking(int fd) {
+#ifdef _WIN32
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0;
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
 }
 
 static void ignore_sigpipe() {
+#ifndef _WIN32
     static std::once_flag once;
     std::call_once(once, [] { std::signal(SIGPIPE, SIG_IGN); });
+#endif
 }
 
 static std::string_view find_header(const Request& req, std::string_view name) {
@@ -1099,15 +1110,23 @@ static const char* mime_for(const std::string& path) {
 
 void Context::serve_file(const std::string& filepath) {
     if (ended) return;
+#ifdef _WIN32
+    int fd = ::_open(filepath.c_str(), _O_RDONLY | _O_BINARY);
+#else
     int fd = ::open(filepath.c_str(), O_RDONLY);
+#endif
     if (fd < 0) {
         res.status = 404;
         json(json::object({{"error", json::string("Not Found")}}));
         return;
     }
     struct stat st{};
+#ifdef _WIN32
+    if (fstat(fd, &st) < 0 || (st.st_mode & _S_IFDIR)) {
+#else
     if (fstat(fd, &st) < 0 || S_ISDIR(st.st_mode)) {
-        sys_close(fd);
+#endif
+        sys_close_file(fd);
         res.status = 404;
         json(json::object({{"error", json::string("Not Found")}}));
         return;
@@ -1216,7 +1235,11 @@ void App::listen(int port, const std::string& host) {
     if (listen_fd < 0) return;
 
     int opt = 1;
+#ifdef _WIN32
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#else
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
 #ifdef SO_REUSEPORT
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #endif
@@ -1245,7 +1268,7 @@ void App::listen(int port, const std::string& host) {
     }
 
     for (size_t i = 0; i < nw; ++i) {
-        threads_.emplace_back([this, listen_fd, i]() {
+        threads_.emplace_back([this, listen_fd]() {
 #if defined(__linux__)
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
@@ -1280,7 +1303,7 @@ void App::close() {
         std::lock_guard<std::mutex> lk(wake_mutex_);
         for (int fd : wake_fds_) {
             char b = 1;
-            ssize_t n = ::write(fd, &b, 1);
+            ssize_t n = sys_write(fd, &b, 1);
             (void)n;
         }
     }
