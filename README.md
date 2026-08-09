@@ -12,7 +12,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.0.14:** N-API Batch Dispatch (up to 8 requests dispatched to JS per single TSFN call), Pre-cached HTTP Response Tail strings (no string allocation for `Date` / `Connection` / `Server` headers on hot path), C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v6.0.16:** V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings (no string allocation for `Date` / `Connection` / `Server` headers on hot path), C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
@@ -20,7 +20,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 
 - 🏎️ **Ultra-Fast C++17 Core**: Event-driven `kqueue`/`epoll` architecture with `SO_REUSEPORT` multi-threading.
 - ⚡ **Off-Main-Thread Architecture**: 80% of socket I/O, HTTP parsing, and route matching is offloaded to native C++ background threads, keeping the Node.js JS event loop completely unblocked.
-- ♻️ **Object Pooling & Zero-Copy Memory**: Thread-local `PendingCall` and JS `Context` object pools eliminate V8 Garbage Collection freezes and dynamic memory allocations.
+- ♻️ **Object Pooling & Monomorphic Shapes**: Thread-local `PendingCall` and JS `Context` object pools with strict V8 monomorphic shape enforcement eliminate Garbage Collection freezes.
 - 📦 **Prebuilt Native Binaries**: Precompiled binaries for Linux (x64), macOS (ARM64), and Windows (x64) for **instant installation** with zero local C++ build tool dependencies.
 - 🔒 **Zero Runtime Dependencies**: 0 npm third-party runtime dependencies. Uses native Node.js `crypto`, `zlib`, `fs`, `path`.
 - 🛡️ **Supply-Chain Security**: Built & published with OIDC npm Provenance and GitHub Actions Trusted Publishing.
