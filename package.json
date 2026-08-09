@@ -57,7 +57,7 @@
     "install": "node scripts/install.mjs",
     "build": "make",
     "test": "make test",
-    "bench": "make bench",
+    "bench": "node bench/bench-addon.mjs 4",
     "clean": "make clean"
   }
 }

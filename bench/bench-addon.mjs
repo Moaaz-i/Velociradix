@@ -102,7 +102,7 @@ function measureNode(port, total, k, pipe) {
 const fmt = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : n.toFixed(0));
 
 async function main() {
-  const workers = Number(process.argv[2] ?? 0);
+  const workers = Number(process.argv[2] ?? 4);
   const proc = spawn(process.execPath, [ADDON_SERVER, String(PORT), String(workers)], { stdio: "ignore" });
   for (let i = 0; i < 100; i++) {
     try {

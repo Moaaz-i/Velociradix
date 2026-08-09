@@ -595,6 +595,7 @@ struct Conn {
     std::string in;    // read buffer
     size_t consumed = 0;
     std::string out;   // pending write data
+    size_t out_offset = 0; // write offset to eliminate O(N) erase(0, n) memory shifts
     std::mutex wmtx;   // guards out for cross-thread writes
     std::atomic<bool> closed{false};
     std::atomic<bool> streaming{false};
@@ -616,6 +617,10 @@ struct Conn {
     void append(const char* data, size_t len) {
         std::lock_guard<std::mutex> lk(wmtx);
         if (closed) return;
+        if (out_offset > 0 && out_offset == out.size()) {
+            out.clear();
+            out_offset = 0;
+        }
         out.append(data, len);
     }
     void append(const std::string& s) { append(s.data(), s.size()); }
@@ -821,9 +826,22 @@ struct App::Worker {
     int loop_fd = -1;
     int listen_fd = -1;
     int wake_pipe[2] = { -1, -1 };
-    std::unordered_map<int, Conn*> conns;
+    std::vector<Conn*> conns;
 
     explicit Worker(App* a, int lfd) : app(a), listen_fd(lfd) {}
+
+    Conn* get_conn(int fd) const {
+        if (fd < 0 || (size_t)fd >= conns.size()) return nullptr;
+        return conns[(size_t)fd];
+    }
+    void set_conn(int fd, Conn* c) {
+        if (fd < 0) return;
+        if ((size_t)fd >= conns.size()) conns.resize((size_t)fd + 128, nullptr);
+        conns[(size_t)fd] = c;
+    }
+    void remove_conn(int fd) {
+        if (fd >= 0 && (size_t)fd < conns.size()) conns[(size_t)fd] = nullptr;
+    }
 
     void request_write(int fd) { 
         ev_mod(loop_fd, fd, true, true); 
@@ -868,28 +886,29 @@ struct App::Worker {
                     accept_loop();
                     continue;
                 }
-                auto it = conns.find(e.fd);
-                if (it == conns.end()) continue;
-                Conn* c = it->second;
+                Conn* c = get_conn(e.fd);
+                if (!c) continue;
                 if (e.err) { close_conn(e.fd, c); continue; }
                 if (e.read) {
                     on_readable(e.fd, c);
-                    if (conns.count(e.fd) == 0) continue;
+                    if (!get_conn(e.fd)) continue;
                 }
                 if (e.write) {
                     flush(c);
-                    if (conns.count(e.fd) == 0) continue;
-                    if ((c->want_close || c->peer_half_closed) && c->out.empty()) {
+                    if (!get_conn(e.fd)) continue;
+                    if ((c->want_close || c->peer_half_closed) && (c->out.empty() || c->out_offset == c->out.size())) {
                         close_conn(e.fd, c);
                     }
                 }
             }
         }
 
-        for (auto& kv : conns) {
-            kv.second->closed = true;
-            sys_close(kv.first);
-            if (--kv.second->refs == 0) delete kv.second;
+        for (size_t i = 0; i < conns.size(); ++i) {
+            Conn* c = conns[i];
+            if (!c) continue;
+            c->closed = true;
+            sys_close((int)i);
+            if (--c->refs == 0) delete c;
         }
         conns.clear();
         sys_close(listen_fd);
@@ -913,16 +932,17 @@ struct App::Worker {
             c->fd = cfd;
             c->worker = this;
             ev_add(loop_fd, cfd, true, false);
-            conns[cfd] = c;
+            set_conn(cfd, c);
         }
     }
 
     void on_readable(int fd, Conn* c) {
-        char buf[16384];
         for (;;) {
-            ssize_t n = sys_read(fd, buf, sizeof(buf));
+            size_t old_len = c->in.size();
+            c->in.resize(old_len + 16384);
+            ssize_t n = sys_read(fd, &c->in[old_len], 16384);
             if (n > 0) {
-                c->in.append(buf, (size_t)n);
+                c->in.resize(old_len + (size_t)n);
                 if (c->in.size() > app->payload_limit_) { // max request body
                     send_error(c, 413, "Payload Too Large");
                     c->in.clear();
@@ -930,10 +950,12 @@ struct App::Worker {
                     c->want_close = true;
                     return;
                 }
-            } else if (n == 0) {
-                c->peer_half_closed = true;
-                break;
             } else {
+                c->in.resize(old_len);
+                if (n == 0) {
+                    c->peer_half_closed = true;
+                    break;
+                }
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break;
                 close_conn(fd, c);
@@ -943,8 +965,8 @@ struct App::Worker {
         }
         if (!c->streaming) process_pending(c);
         flush(c);
-        if (conns.count(fd) == 0) return;
-        if ((c->want_close || c->peer_half_closed) && c->out.empty()) {
+        if (!get_conn(fd)) return;
+        if ((c->want_close || c->peer_half_closed) && (c->out.empty() || c->out_offset == c->out.size())) {
             close_conn(fd, c);
         }
     }
@@ -997,10 +1019,14 @@ struct App::Worker {
     void flush(Conn* c) {
         std::unique_lock<std::mutex> lk(c->wmtx);
         if (c->closed) return;
-        while (!c->out.empty()) {
-            ssize_t n = sys_write(c->fd, c->out.data(), c->out.size());
+        while (c->out_offset < c->out.size()) {
+            ssize_t n = sys_write(c->fd, c->out.data() + c->out_offset, c->out.size() - c->out_offset);
             if (n > 0) {
-                c->out.erase(0, (size_t)n);
+                c->out_offset += (size_t)n;
+                if (c->out_offset == c->out.size()) {
+                    c->out.clear();
+                    c->out_offset = 0;
+                }
                 continue;
             }
             if (n < 0 && errno == EINTR) continue;
@@ -1014,7 +1040,9 @@ struct App::Worker {
             close_conn(c->fd, c);
             return;
         }
-        if (c->out.empty() && c->write_enabled) {
+        if ((c->out.empty() || c->out_offset == c->out.size()) && c->write_enabled) {
+            c->out.clear();
+            c->out_offset = 0;
             c->write_enabled = false;
             lk.unlock();
             request_write_off(c->fd);
@@ -1022,7 +1050,7 @@ struct App::Worker {
     }
 
     void close_conn(int fd, Conn* c) {
-        conns.erase(fd);
+        remove_conn(fd);
         c->closed = true;
         sys_close(fd);
         if (--c->refs == 0) delete c;
@@ -1425,6 +1453,7 @@ void App::respond_async(Conn* c, uint64_t seq, int status,
                         std::vector<std::pair<std::string, std::string>> headers,
                         std::string body, bool keep_alive) {
     std::string raw;
+    raw.reserve(256 + body.size() + headers.size() * 32);
     raw += "HTTP/1.1 ";
     append_uint(raw, (size_t)status);
     raw += " ";
@@ -1436,9 +1465,12 @@ void App::respond_async(Conn* c, uint64_t seq, int status,
         raw += ": ";
         raw += h.second;
         raw += "\r\n";
-        std::string hname = h.first;
-        to_lower(hname);
-        if (hname == "content-length") has_cl = true;
+        if (h.first.size() == 14) {
+            char b[15];
+            for (size_t i = 0; i < 14; ++i) b[i] = (char)tolower((unsigned char)h.first[i]);
+            b[14] = '\0';
+            if (std::memcmp(b, "content-length", 14) == 0) has_cl = true;
+        }
     }
     if (!has_cl) {
         raw += "Content-Length: ";

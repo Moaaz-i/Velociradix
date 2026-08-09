@@ -55,6 +55,35 @@ struct PendingCall {
     napi_ref sse_cb_ref = nullptr;
 };
 
+static thread_local std::vector<PendingCall*> g_pc_pool;
+
+static PendingCall* acquire_pending_call() {
+    if (!g_pc_pool.empty()) {
+        PendingCall* pc = g_pc_pool.back();
+        g_pc_pool.pop_back();
+        pc->responded.store(false);
+        pc->sse_closed.store(false);
+        pc->sse_cb_ref = nullptr;
+        pc->headers.clear();
+        pc->params.clear();
+        return pc;
+    }
+    return new PendingCall();
+}
+
+static void release_pending_call(PendingCall* pc) {
+    if (!pc) return;
+    if (pc->sse_cb_ref) {
+        delete pc;
+        return;
+    }
+    if (g_pc_pool.size() < 2048) {
+        g_pc_pool.push_back(pc);
+    } else {
+        delete pc;
+    }
+}
+
 struct AddonApp {
     velociradix::App* app = nullptr;
     napi_env env = nullptr;
@@ -99,6 +128,7 @@ static napi_status make_string_map(napi_env env,
                             napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;
+    if (kv.empty()) return napi_ok;
     for (const auto& p : kv) {
         napi_value k, v;
         mk_string(env, p.first, &k);
@@ -114,6 +144,7 @@ static napi_status make_params_map(napi_env env,
                             napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;
+    if (params.empty()) return napi_ok;
     for (const auto& p : params) {
         napi_value k, v;
         mk_string(env, p.first, &k);
@@ -213,7 +244,7 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
         }
     }
 
-    PendingCall* pc = new PendingCall();
+    PendingCall* pc = acquire_pending_call();
     pc->app = a;
     pc->conn = ctx.conn;
     pc->seq = a->app->alloc_seq(ctx.conn);
@@ -238,7 +269,7 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
     napi_status st = napi_call_threadsafe_function(a->tsfn, pc, napi_tsfn_blocking);
     if (st != napi_ok) {
         a->app->release_conn(ctx.conn);
-        delete pc;
+        release_pending_call(pc);
         ctx.status(503).send("dispatcher busy");
         return;
     }
@@ -691,7 +722,7 @@ static napi_value js_respond(napi_env env, napi_callback_info info) {
     // After this the worker never touches `pc` again, so it is freed here.
     pc->app->app->respond_async(pc->conn, pc->seq, status, std::move(headers),
                                 std::move(body), pc->keep_alive);
-    delete pc;
+    release_pending_call(pc);
     napi_value undef;
     napi_get_undefined(env, &undef);
     return undef;

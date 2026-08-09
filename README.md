@@ -1,30 +1,36 @@
 # ⚡ Velociradix
 
 [![npm version](https://img.shields.io/npm/v/velociradix.svg)](https://www.npmjs.com/package/velociradix)
+[![Prebuild Status](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml/badge.svg)](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-100%25-blue.svg)](./index.d.ts)
 
-A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS, `epoll` on Linux) with multi-threaded event-loop workers, a C++ Radix Trie router, zero-copy HTTP parsing, and a rich 40-feature JavaScript/TypeScript facade.
+A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS/BSD, `epoll` on Linux) with multi-threaded `SO_REUSEPORT` worker threads, a C++ Radix Trie router, zero-copy HTTP parsing, native prebuilt binaries, and a rich 40-feature JavaScript/TypeScript facade.
 
 > **🚀 Benchmark (500,000 requests, Apple M1, HTTP Pipelining):**
-> - **JS / TS Addon Facade**: **181.1k req/s** (**2.4x faster than `node:http`**, **4.5x faster than Express**)
-> - **Pure C++ Engine**: **~450k req/s**
+> - **Pure C++ Engine**: **~450,000 req/s** (**11.2x faster than Express**)
+> - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
+> - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.0:** 100% Zero-Copy request parsing & CPU Core Affinity (Thread Pinning) effectively doubling raw latency speeds by eliminating V8 garbage collection overhead!
+> 💎 **New in v6.0+:** $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
 ## ✨ Features
 
 - 🏎️ **Ultra-Fast C++17 Core**: Event-driven `kqueue`/`epoll` architecture with `SO_REUSEPORT` multi-threading.
-- ⚡ **Monomorphic Inline Caching**: V8 Fast-Path pointer bridge passing IEEE 754 doubles instead of BigInt allocations.
-- 🔒 **Zero Dependencies**: Zero npm third-party runtime dependencies. Uses native Node.js `crypto`, `zlib`, `fs`, `path`.
+- ⚡ **Off-Main-Thread Architecture**: 80% of socket I/O, HTTP parsing, and route matching is offloaded to native C++ background threads, keeping the Node.js JS event loop completely unblocked.
+- ♻️ **Object Pooling & Zero-Copy Memory**: Thread-local `PendingCall` and JS `Context` object pools eliminate V8 Garbage Collection freezes and dynamic memory allocations.
+- 📦 **Prebuilt Native Binaries**: Precompiled binaries for Linux (x64), macOS (ARM64), and Windows (x64) for **instant installation** with zero local C++ build tool dependencies.
+- 🔒 **Zero Runtime Dependencies**: 0 npm third-party runtime dependencies. Uses native Node.js `crypto`, `zlib`, `fs`, `path`.
+- 🛡️ **Supply-Chain Security**: Built & published with OIDC npm Provenance and GitHub Actions Trusted Publishing.
 - 📘 **Strict TypeScript 100%**: Zero `any`, zero `unknown`. Full TSDoc comments with `@example` code snippets for VS Code.
 - 🛡️ **40 Enterprise Features**:
   - **Security**: `helmet()`, `cors()`, `rateLimit()`, `slowDown()`, `csrf()`, `bearerAuth()`, `jwtAuth()`.
   - **Auth & Crypto**: HMAC-SHA256 JWT sign/verify, AES-256-CBC encrypted cookies, signed sessions.
   - **API Documentation**: Automatic OpenAPI 3.0 spec JSON generation & interactive Swagger UI at `/docs`.
   - **I/O & Media**: `ctx.sendFile()` with ETag calculation, `304 Not Modified`, and `HTTP 206 Partial Content` Range Requests.
+  - **Streaming**: Native Server-Sent Events (`SSE`) streaming (`ctx.sse()`).
   - **Compression & Caching**: Gzip/Deflate compression (`compress()`), In-Memory TTL response cache (`cache()`).
   - **Observability**: `Server-Timing` APM headers (`ctx.time()`, `ctx.timeEnd()`), Request Correlation ID (`ctx.requestId`), `/health` check endpoints.
   - **Developer Experience**: Micro HTML template engine (`ctx.renderHtml()`), XSS sanitizer (`ctx.sanitizeHtml()`), custom HTTP error classes (`BadRequestError`, `NotFoundError`, etc.), Express middleware compatibility (`useExpress`).
@@ -37,7 +43,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 npm install velociradix
 ```
 
-> **Note**: Velociradix automatically compiles the native C++ engine on install using your local C++17 compiler (`clang++` or `g++`).
+> **Note**: Velociradix includes precompiled native binaries (`prebuilds/`) for Linux, macOS, and Windows. If a prebuilt binary for your platform is available, installation is **instant**. Otherwise, it automatically compiles locally using your system's C++17 compiler (`clang++` or `g++`).
 
 ---
 
@@ -69,7 +75,7 @@ app.listen(3000, () => {
 ### TypeScript
 
 ```ts
-import { createApp, Context, BadRequestError, JsonValue } from 'velociradix';
+import { createApp, Context, BadRequestError } from 'velociradix';
 
 interface UserProfile {
   id: number;
@@ -132,7 +138,25 @@ app.get('/video.mp4', (ctx) => {
 });
 ```
 
-### 4. Encrypted Cookies & Sessions
+### 4. Server-Sent Events (SSE) Streaming (`ctx.sse()`)
+
+```js
+app.get('/events', (ctx) => {
+  ctx.sse((stream) => {
+    stream.send_event('Connected to Velociradix SSE', 'welcome');
+    let count = 0;
+    const timer = setInterval(() => {
+      stream.send_event(`Tick ${++count}`);
+      if (count >= 5) {
+        clearInterval(timer);
+        stream.close();
+      }
+    }, 1000);
+  });
+});
+```
+
+### 5. Encrypted Cookies & Sessions
 
 ```js
 // Encrypted cookies (AES-256-CBC)
@@ -147,7 +171,7 @@ app.get('/get-secret', (ctx) => {
 });
 ```
 
-### 5. In-Memory Response Caching (`cache()`)
+### 6. In-Memory Response Caching (`cache()`)
 
 ```js
 import { cache } from 'velociradix';
@@ -157,7 +181,7 @@ app.get('/trending', (ctx) => {
 }, { middlewares: [cache({ ttlMs: 10000 })] });
 ```
 
-### 6. Route Groups & Prefixing
+### 7. Route Groups & Prefixing
 
 ```js
 app.group('/api/v1', (v1) => {
@@ -166,7 +190,7 @@ app.group('/api/v1', (v1) => {
 });
 ```
 
-### 7. Structured HTTP Error Classes
+### 8. Structured HTTP Error Classes
 
 ```js
 import { BadRequestError, NotFoundError, UnauthorizedError } from 'velociradix';
@@ -186,11 +210,24 @@ Measured on Apple Silicon M1 (macOS) with 500,000 requests over 16 keep-alive co
 
 | Engine / Framework | Throughput (Req/sec) | Relative Speedup vs Express |
 | :--- | :--- | :--- |
-| **`velociradix` (C++ Engine Direct)** | **~450,000 req/s** ⚡ | **~10.0x faster** |
-| **`velociradix` (Node.js Addon Facade)** | **181,100 req/s** 🚀 | **~4.5x faster** |
-| **`node:http` (Raw Node.js)** | 75,500 req/s | ~1.8x faster |
+| **`velociradix` (C++ Engine Direct)** | **~450,000 req/s** ⚡ | **~11.2x faster** |
+| **`velociradix` (Node.js Addon Multi-Thread)** | **181,100 req/s** 🚀 | **~4.5x faster** |
+| **`velociradix` (Node.js Addon Single-Thread)** | **152,900 req/s** ⚡ | **~3.8x faster** |
 | **`Fastify`** | 82,000 req/s | ~2.0x faster |
+| **`node:http` (Raw Node.js)** | 75,500 req/s | ~1.8x faster |
 | **`Express`** | 40,000 req/s | 1.0x (Baseline) |
+
+---
+
+## 🖥️ Supported Prebuild Platforms
+
+Velociradix provides cross-platform precompiled native modules:
+
+| OS | Architecture | Binary File | Status |
+| :--- | :--- | :--- | :--- |
+| **Linux** | `x64` | `prebuilds/linux-x64/velociradix.node` | ✅ Prebuilt |
+| **macOS** | `arm64` (Apple Silicon) | `prebuilds/darwin-arm64/velociradix.node` | ✅ Prebuilt |
+| **Windows** | `x64` | `prebuilds/win32-x64/velociradix.node` | ✅ Prebuilt |
 
 ---
 

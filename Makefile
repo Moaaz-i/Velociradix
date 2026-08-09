@@ -57,7 +57,7 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 bench: $(ADDON)
-	node bench/bench-addon.mjs
+	node bench/bench-addon.mjs 4
 
 addon: $(ADDON)
 
