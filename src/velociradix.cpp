@@ -235,6 +235,28 @@ static const std::string& cached_date() {
     return g_str;
 }
 
+// Pre-built tail fragments (refreshed once per second) to avoid repeated
+// string concatenation on the hot response-building path.
+struct CachedTail {
+    time_t ts = 0;
+    std::string keep_alive; // "Connection: keep-alive\r\nDate: ...\r\nServer: velociradix\r\n\r\n"
+    std::string close_conn; // "Connection: close\r\nDate: ...\r\nServer: velociradix\r\n\r\n"
+};
+static thread_local CachedTail g_tail;
+
+static void refresh_tail() {
+    time_t now = time(nullptr);
+    if (now == g_tail.ts) return;
+    g_tail.ts = now;
+    const std::string& d = http_date(now);
+    g_tail.keep_alive  = "Connection: keep-alive\r\nDate: ";
+    g_tail.keep_alive += d;
+    g_tail.keep_alive += "\r\nServer: velociradix\r\n\r\n";
+    g_tail.close_conn  = "Connection: close\r\nDate: ";
+    g_tail.close_conn += d;
+    g_tail.close_conn += "\r\nServer: velociradix\r\n\r\n";
+}
+
 static bool set_nonblocking(int fd) {
 #ifdef _WIN32
     u_long mode = 1;
@@ -1503,11 +1525,8 @@ void App::finalize(Conn* c, const Request& req, Response& res) {
         append_uint(o, res.body.size());
         o += "\r\n";
     }
-    o += "Connection: ";
-    o += keep_alive ? "keep-alive" : "close";
-    o += "\r\nDate: ";
-    o += cached_date();
-    o += "\r\nServer: velociradix\r\n\r\n";
+    refresh_tail();
+    o += keep_alive ? g_tail.keep_alive : g_tail.close_conn;
     o += res.body;
 }
 
@@ -1546,11 +1565,8 @@ void App::respond_async(Conn* c, uint64_t seq, int status,
         append_uint(raw, body.size());
         raw += "\r\n";
     }
-    raw += "Connection: ";
-    raw += keep_alive ? "keep-alive" : "close";
-    raw += "\r\nDate: ";
-    raw += cached_date();
-    raw += "\r\nServer: velociradix\r\n\r\n";
+    refresh_tail();
+    raw += keep_alive ? g_tail.keep_alive : g_tail.close_conn;
     raw += body;
 
     bool appended = false;

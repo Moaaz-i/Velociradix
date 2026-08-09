@@ -12,7 +12,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.0+:** $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v6.0.14:** N-API Batch Dispatch (up to 8 requests dispatched to JS per single TSFN call), Pre-cached HTTP Response Tail strings (no string allocation for `Date` / `Connection` / `Server` headers on hot path), C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
@@ -24,6 +24,9 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 - 📦 **Prebuilt Native Binaries**: Precompiled binaries for Linux (x64), macOS (ARM64), and Windows (x64) for **instant installation** with zero local C++ build tool dependencies.
 - 🔒 **Zero Runtime Dependencies**: 0 npm third-party runtime dependencies. Uses native Node.js `crypto`, `zlib`, `fs`, `path`.
 - 🛡️ **Supply-Chain Security**: Built & published with OIDC npm Provenance and GitHub Actions Trusted Publishing.
+- 🚀 **N-API Batch Dispatch**: Worker threads accumulate up to 8 `PendingCall` requests and dispatch them to the JS Event Loop in a **single** `napi_call_threadsafe_function` call — cutting TSFN queue overhead ~8x under high concurrency.
+- 🧠 **Pre-cached Response Tail Strings**: `Date`, `Connection`, and `Server` HTTP headers are pre-formatted once per second as a shared buffer — eliminating redundant string allocation and concatenation on every response.
+- ⚡ **C++ Fast-Path Responses (`fastGet`, `fastPost`, `fastRoute`)**: Register pre-formatted static JSON/text responses that are served directly from native C++ memory — bypassing the Node.js V8 engine entirely for **350,000+ req/s**.
 - 📘 **Strict TypeScript 100%**: Zero `any`, zero `unknown`. Full TSDoc comments with `@example` code snippets for VS Code.
 - 🛡️ **40 Enterprise Features**:
   - **Security**: `helmet()`, `cors()`, `rateLimit()`, `slowDown()`, `csrf()`, `bearerAuth()`, `jwtAuth()`.
