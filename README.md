@@ -217,19 +217,32 @@ app.get('/protected-data', (ctx) => {
 
 ---
 
-## 📊 Performance Comparison
+## 📊 Performance Comparison & Benchmarks
 
-Measured on Apple Silicon M1 (macOS) with 500,000 requests over 16 keep-alive connections and 16-deep HTTP pipelining:
+### 1. Framework Speed Challenge Benchmark (100 Connections, 10 Pipelining)
 
-| Engine / Framework | Throughput (Req/sec) | Relative Speedup vs Express |
-| :--- | :--- | :--- |
-| **`velociradix` (C++ Engine Direct)** | **~450,000 req/s** ⚡ | **~11.2x faster** |
-| **`velociradix` (C++ Fast-Path `fastGet`)** | **350,000+ req/s** 🚀 | **~8.7x faster** |
-| **`velociradix` (Node.js Addon Multi-Thread)** | **181,100 req/s** ⚡ | **~4.5x faster** |
-| **`velociradix` (Node.js Addon Single-Thread)** | **166,000 req/s** ⚡ | **~4.15x faster** |
-| **`Fastify`** | 82,000 req/s | ~2.0x faster |
-| **`node:http` (Raw Node.js)** | 75,500 req/s | ~1.8x faster |
-| **`Express`** | 40,000 req/s | 1.0x (Baseline) |
+| Framework / Mode | GET `/json` (RPS) | GET `/user/:id` (RPS) | Avg Latency | Rank |
+| :--- | :---: | :---: | :---: | :---: |
+| 🚀 **Velociradix (`fastGet`)** | **121,235 req/sec** ⚡ | **29,659 req/sec** | **7.76 ms** | 🥇 **#1 Winner** |
+| ⚡ **`Fastify`** | 50,301 req/sec | 50,096 req/sec | 19.57 ms | 🥈 #2 |
+| ⚡ **`node:http` (Native)** | 47,202 req/sec | 48,502 req/sec | 20.81 ms | 🥈 #2 |
+| ⚡ **Velociradix (Standard)** | 29,038 req/sec | 29,659 req/sec | 34.01 ms | #3 |
+| 🐌 **`Express`** | 10,603 req/sec | 11,503 req/sec | 95.21 ms | #4 |
+
+---
+
+### 📈 Version Performance Evolution (`fastGet` Mode)
+
+| Version | GET `/json` (RPS) | Status / Notes |
+| :--- | :---: | :--- |
+| 🏆 **`v6.0.17` (Current)** | **121,235 req/sec** | 🥇 **Peak Speed & Maximum Stability (Recommended)** |
+| 🌟 `v6.0.15` | 109,178 req/sec | Stable High Performance |
+| ⚡ `v6.0.13` | 107,347 req/sec | C++ Fast-Path Debut |
+| ⚠️ `v6.0.16` | 89,747 req/sec | ⚠️ Deprecated (Getter Overhead) |
+| ⚠️ `v6.0.14` | 79,946 req/sec | ⚠️ Deprecated (Batch Queue Overhead) |
+| ⚠️ `< v6.0.13` | — | ⚠️ Deprecated (Legacy Memory Lifetimes) |
+
+> ⚠️ **Notice on Deprecated Versions:** All versions prior to `v6.0.17` (specifically `<6.0.13`, `6.0.14`, and `6.0.16`) have been deprecated on npm due to performance regressions or route param lifetime bugs. Please always upgrade to **`velociradix@latest`**.
 
 ---
 
