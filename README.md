@@ -12,7 +12,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.0.16:** V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings (no string allocation for `Date` / `Connection` / `Server` headers on hot path), C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v6.0.18:** Complete Architecture & Technical Deep-Dive Guide ([ARCHITECTURE.md](./ARCHITECTURE.md)), Peak Benchmark Winner (121,235 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
