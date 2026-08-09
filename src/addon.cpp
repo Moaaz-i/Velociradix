@@ -100,15 +100,6 @@ struct AddonApp {
     int next_route_id = 1;
     std::mutex pc_mtx;
     std::vector<PendingCall*> sse_pcs; // freed on destroy; avoids UAF after close()
-
-    // -----------------------------------------------------------------------
-    // Batch dispatch: worker threads accumulate PendingCalls into a
-    // thread-local staging vector; when the batch is full (or the first item
-    // arrives) a single napi_call_threadsafe_function is issued carrying the
-    // entire batch as a heap-allocated vector.  This cuts TSFN queue overhead
-    // by the average batch size (typically 4-16x at high concurrency).
-    // -----------------------------------------------------------------------
-    static constexpr size_t kBatchSize = 8; // flush when batch reaches this size
 };
 
 static std::mutex g_mtx;
@@ -279,95 +270,46 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
     // Take over: hold a connection reference so the JS main thread can safely
     // deliver the response later, then dispatch and return WITHOUT waiting.
     a->app->hold_conn(ctx.conn);
-
-    // --- Batch dispatch ---------------------------------------------------
-    // Accumulate PendingCalls in a thread-local staging buffer.  When the
-    // buffer reaches kBatchSize we flush the whole batch as a single TSFN
-    // call, cutting the TSFN queue overhead by ~kBatchSize under load.
-    // For low-traffic scenarios (batch size 1) we still flush immediately.
-    static thread_local std::vector<PendingCall*> g_batch;
-    static thread_local AddonApp* g_batch_app = nullptr;
-
-    // If the app changed (unlikely but possible), flush any pending batch first.
-    if (g_batch_app && g_batch_app != a && !g_batch.empty()) {
-        auto* flush_vec = new std::vector<PendingCall*>(std::move(g_batch));
-        g_batch.clear();
-        napi_call_threadsafe_function(g_batch_app->tsfn, flush_vec, napi_tsfn_blocking);
-    }
-    g_batch_app = a;
-    g_batch.push_back(pc);
-
-    if (g_batch.size() >= AddonApp::kBatchSize) {
-        // Batch is full — flush now.
-        auto* flush_vec = new std::vector<PendingCall*>(std::move(g_batch));
-        g_batch.clear();
-        napi_status st = napi_call_threadsafe_function(a->tsfn, flush_vec, napi_tsfn_blocking);
-        if (st != napi_ok) {
-            // Roll back: the batch owns its own hold_conn refs so release all.
-            for (PendingCall* p : *flush_vec) {
-                a->app->release_conn(p->conn);
-                release_pending_call(p);
-            }
-            delete flush_vec;
-            ctx.status(503).send("dispatcher busy");
-            return;
-        }
-    } else {
-        // Batch not full yet — flush immediately as a size-1 batch so that
-        // requests are never delayed (preserves latency at low concurrency).
-        auto* flush_vec = new std::vector<PendingCall*>(std::move(g_batch));
-        g_batch.clear();
-        napi_status st = napi_call_threadsafe_function(a->tsfn, flush_vec, napi_tsfn_blocking);
-        if (st != napi_ok) {
-            for (PendingCall* p : *flush_vec) {
-                a->app->release_conn(p->conn);
-                release_pending_call(p);
-            }
-            delete flush_vec;
-            ctx.status(503).send("dispatcher busy");
-            return;
-        }
+    napi_status st = napi_call_threadsafe_function(a->tsfn, pc, napi_tsfn_blocking);
+    if (st != napi_ok) {
+        a->app->release_conn(ctx.conn);
+        release_pending_call(pc);
+        ctx.status(503).send("dispatcher busy");
+        return;
     }
     ctx.took_over = true;
 }
 
 // ---------------------------------------------------------------------------
 // napi_threadsafe_function call_js: runs on the Node main thread.
-// Dispatches to the JS `dispatch` function for a BATCH of PendingCalls.
+// Dispatches to the JS `dispatch` function, or invokes an SSE producer cb.
 // ---------------------------------------------------------------------------
 static void dispatch_js(napi_env env, napi_value /*js_cb*/, void* context, void* data) {
     auto* a = (AddonApp*)context;
-    // data is a heap-allocated std::vector<PendingCall*>*
-    auto* batch = static_cast<std::vector<PendingCall*>*>(data);
+    auto* pc = (PendingCall*)data;
 
-    if (!a->dispatch_ref) { delete batch; return; }
+    if (!a->dispatch_ref) return;
     napi_value dispatch;
-    if (napi_get_reference_value(env, a->dispatch_ref, &dispatch) != napi_ok) { delete batch; return; }
+    if (napi_get_reference_value(env, a->dispatch_ref, &dispatch) != napi_ok) return;
 
-    napi_value undef;
+    // Minimal hot path: pass only (routeId, ptr). All request fields (method,
+    // path, query, body, headers, params) are fetched lazily by JS via the
+    // native getters below, only when a handler actually reads them.
+    napi_value args[2];
+    napi_create_int32(env, pc->route_id, &args[0]);
+    napi_create_double(env, (double)(uintptr_t)pc, &args[1]);
+
+    napi_value ret, undef;
     napi_get_undefined(env, &undef);
-
-    // Process every PendingCall in the batch in one JS microtask turn.
-    for (PendingCall* pc : *batch) {
-        // Minimal hot path: pass only (routeId, ptr). All request fields
-        // (method, path, query, body, headers, params) are fetched lazily
-        // by JS via native getters, only when a handler actually reads them.
-        napi_value args[2];
-        napi_create_int32(env, pc->route_id, &args[0]);
-        napi_create_double(env, (double)(uintptr_t)pc, &args[1]);
-
-        napi_value ret;
-        napi_status st = napi_call_function(env, undef, dispatch, 2, args, &ret);
-        if (st != napi_ok) {
-            bool pending = false;
-            napi_is_exception_pending(env, &pending);
-            if (pending) {
-                napi_value exc;
-                napi_get_and_clear_last_exception(env, &exc);
-            }
+    napi_status st = napi_call_function(env, undef, dispatch, 2, args, &ret);
+    if (st != napi_ok) {
+        bool pending = false;
+        napi_is_exception_pending(env, &pending);
+        if (pending) {
+            napi_value exc;
+            napi_get_and_clear_last_exception(env, &exc);
         }
     }
-    delete batch;
 }
 
 // ---------------------------------------------------------------------------

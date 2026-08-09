@@ -24,7 +24,6 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 - 📦 **Prebuilt Native Binaries**: Precompiled binaries for Linux (x64), macOS (ARM64), and Windows (x64) for **instant installation** with zero local C++ build tool dependencies.
 - 🔒 **Zero Runtime Dependencies**: 0 npm third-party runtime dependencies. Uses native Node.js `crypto`, `zlib`, `fs`, `path`.
 - 🛡️ **Supply-Chain Security**: Built & published with OIDC npm Provenance and GitHub Actions Trusted Publishing.
-- 🚀 **N-API Batch Dispatch**: Worker threads accumulate up to 8 `PendingCall` requests and dispatch them to the JS Event Loop in a **single** `napi_call_threadsafe_function` call — cutting TSFN queue overhead ~8x under high concurrency.
 - 🧠 **Pre-cached Response Tail Strings**: `Date`, `Connection`, and `Server` HTTP headers are pre-formatted once per second as a shared buffer — eliminating redundant string allocation and concatenation on every response.
 - ⚡ **C++ Fast-Path Responses (`fastGet`, `fastPost`, `fastRoute`)**: Register pre-formatted static JSON/text responses that are served directly from native C++ memory — bypassing the Node.js V8 engine entirely for **350,000+ req/s**.
 - 📘 **Strict TypeScript 100%**: Zero `any`, zero `unknown`. Full TSDoc comments with `@example` code snippets for VS Code.
