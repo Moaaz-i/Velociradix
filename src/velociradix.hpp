@@ -126,6 +126,9 @@ public:
     App& patch(const std::string& path, Handler h, std::vector<Middleware> mws = {});
     App& head(const std::string& path, Handler h, std::vector<Middleware> mws = {});
     App& options(const std::string& path, Handler h, std::vector<Middleware> mws = {});
+    App& fast_route(const std::string& method, const std::string& path, int status,
+                     const std::vector<std::pair<std::string, std::string>>& headers,
+                     const std::string& body);
     void add_route(const std::string& method, const std::string& path,
                    Handler h, std::vector<Middleware> mws = {});
     App& use(Middleware mw);                                  // global middleware

@@ -557,6 +557,29 @@ static napi_value js_add_route(napi_env env, napi_callback_info info) {
     return r;
 }
 
+static napi_value js_register_fast_route(napi_env env, napi_callback_info info) {
+    size_t argc = 6;
+    napi_value argv[6];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    auto* a = get_app(env, argv[0]);
+    if (!a || argc < 6) return nullptr;
+
+    std::string method = js_to_string(env, argv[1]);
+    std::string path = js_to_string(env, argv[2]);
+    int32_t status = 200;
+    napi_get_value_int32(env, argv[3], &status);
+
+    std::vector<std::pair<std::string, std::string>> headers;
+    read_map(env, argv[4], headers);
+    std::string body = js_to_string(env, argv[5]);
+
+    a->app->fast_route(method, path, (int)status, headers, body);
+
+    napi_value undef;
+    napi_get_undefined(env, &undef);
+    return undef;
+}
+
 static napi_value js_register_dispatch(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value argv[2];
@@ -777,6 +800,7 @@ static napi_value Init(napi_env env, napi_value exports) {
     const struct { const char* name; napi_callback cb; } fns[] = {
         { "createApp", js_create_app },
         { "addRoute", js_add_route },
+        { "registerFastRoute", js_register_fast_route },
         { "registerDispatch", js_register_dispatch },
         { "enableCors", js_enable_cors },
         { "setStatic", js_set_static },

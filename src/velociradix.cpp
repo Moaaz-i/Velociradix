@@ -1368,6 +1368,53 @@ void App::close() {
     }
 }
 
+App& App::fast_route(const std::string& method, const std::string& path, int status,
+                     const std::vector<std::pair<std::string, std::string>>& headers,
+                     const std::string& body) {
+    std::string resp;
+    resp.reserve(256 + body.size());
+    resp += "HTTP/1.1 ";
+    append_uint(resp, (size_t)status);
+    resp += " ";
+    resp += status_phrase(status);
+    resp += "\r\n";
+    bool has_ct = false;
+    bool has_cl = false;
+    for (const auto& h : headers) {
+        resp += h.first;
+        resp += ": ";
+        resp += h.second;
+        resp += "\r\n";
+        std::string name_lower = h.first;
+        for (auto& c : name_lower) c = (char)std::tolower((unsigned char)c);
+        if (name_lower == "content-type") has_ct = true;
+        if (name_lower == "content-length") has_cl = true;
+    }
+    if (!has_ct) resp += "content-type: application/json\r\n";
+    if (!has_cl) {
+        resp += "content-length: ";
+        append_uint(resp, body.size());
+        resp += "\r\n";
+    }
+    resp += "connection: keep-alive\r\n\r\n";
+    resp += body;
+
+    add_route(method, path, [resp](Context& ctx) {
+        ctx.took_over = true;
+        Conn* c = ctx.conn;
+        std::string date_hdr = "date: " + cached_date() + "\r\n";
+        std::string full_resp = resp;
+        size_t pos = full_resp.find("\r\n");
+        if (pos != std::string::npos) {
+            full_resp.insert(pos + 2, date_hdr);
+        }
+        c->out.append(full_resp);
+        c->worker->flush(c);
+    });
+
+    return *this;
+}
+
 // ---------------------------------------------------------------------------
 // Request handling
 // ---------------------------------------------------------------------------

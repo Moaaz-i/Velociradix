@@ -464,6 +464,12 @@ export interface RouteGroup {
 
 /** Velociradix Application instance interface */
 export interface App {
+  /** Register ultra-fast C++ response fast-path route */
+  fastRoute(method: string, path: string, data: any, status?: number, headers?: Record<string, string>): App;
+  /** Register ultra-fast C++ GET fast-path response */
+  fastGet(path: string, data: any, status?: number, headers?: Record<string, string>): App;
+  /** Register ultra-fast C++ POST fast-path response */
+  fastPost(path: string, data: any, status?: number, headers?: Record<string, string>): App;
   /** Register GET route */
   get(path: string, handler: Handler, options?: RouteOptions): App;
   /** Register POST route */

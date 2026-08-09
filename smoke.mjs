@@ -140,6 +140,7 @@ app
     }
     return { error: err.message };
   })
+  .fastGet("/fast-json", { message: "superfast", status: "ok" })
   .group("/api", (g) => {
     g.get("/users/:id", (ctx) => ({ user: ctx.params.id }));
   })
@@ -224,6 +225,13 @@ async function run() {
   console.log("GET /api/users/123 ->", userRes.status, userRes.text);
   if (!userRes.text.includes('"user":"123"')) {
     throw new Error(`Params test failed! Expected "123", got: ${userRes.text}`);
+  }
+
+  // C++ Fast-Path Response test
+  const fastRes = await j("/fast-json");
+  console.log("GET /fast-json ->", fastRes.status, fastRes.text);
+  if (!fastRes.text.includes('"message":"superfast"')) {
+    throw new Error(`Fast-Path test failed! Got: ${fastRes.text}`);
   }
 
   console.log("Closing app...");

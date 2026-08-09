@@ -748,6 +748,19 @@ function createApp() {
     on: emitter.on.bind(emitter),
     emit: emitter.emit.bind(emitter),
     setTrustProxy(val) { app._trustProxy = Boolean(val); return app; },
+    fastRoute(method, path, data, status = 200, headers = {}) {
+      const body = typeof data === 'string' ? data : JSON.stringify(data);
+      const contentType = typeof data === 'string' ? 'text/plain' : 'application/json';
+      const hdrs = { 'Content-Type': contentType, ...headers };
+      native.registerFastRoute(h, method.toUpperCase(), path, status, hdrs, body);
+      return app;
+    },
+    fastGet(path, data, status = 200, headers = {}) {
+      return app.fastRoute('GET', path, data, status, headers);
+    },
+    fastPost(path, data, status = 200, headers = {}) {
+      return app.fastRoute('POST', path, data, status, headers);
+    },
     all(path, handler, options) {
       HTTP_METHODS.forEach((m) => registerRoute(m, path, handler, options));
       return app;
