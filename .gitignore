@@ -1,2 +1,35 @@
+# Dependencies & Local Node Headers
+node_modules/
+deps/
+
+# Build artifacts & binaries
 obj/
 bin/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Temporary files & logs
+temp_test_report.txt
+*.tmp
+*.log
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE & Editor configurations
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Environment & Secret files
+.env
+.env.*
+!.env.example

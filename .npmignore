@@ -1,0 +1,19 @@
+# Source Control & CI
+.git/
+.github/
+.gitignore
+
+# Tests & Benchmarks
+tests/
+bench/
+smoke.mjs
+temp_test_report.txt
+
+# Build Artifacts (intermediate object files & binaries)
+obj/
+bin/
+
+# Logs & OS files
+.DS_Store
+*.log
+node_modules/
