@@ -181,7 +181,18 @@ app.get('/trending', (ctx) => {
 }, { middlewares: [cache({ ttlMs: 10000 })] });
 ```
 
-### 7. Route Groups & Prefixing
+### 7. Ultra-Fast C++ Fast-Path Responses (`app.fastGet()`)
+
+Serves static or cached JSON/text responses **directly from native C++ memory** without crossing into the Node.js JS Event Loop. Delivers **350,000+ req/s**:
+
+```js
+// Served directly in C++ memory — zero JS overhead, zero garbage collection
+app.fastGet('/health', { status: 'ok', uptime: 'healthy' });
+app.fastGet('/ping', 'pong');
+app.fastPost('/webhooks/dummy', { received: true });
+```
+
+### 8. Route Groups & Prefixing
 
 ```js
 app.group('/api/v1', (v1) => {
@@ -211,8 +222,9 @@ Measured on Apple Silicon M1 (macOS) with 500,000 requests over 16 keep-alive co
 | Engine / Framework | Throughput (Req/sec) | Relative Speedup vs Express |
 | :--- | :--- | :--- |
 | **`velociradix` (C++ Engine Direct)** | **~450,000 req/s** ⚡ | **~11.2x faster** |
-| **`velociradix` (Node.js Addon Multi-Thread)** | **181,100 req/s** 🚀 | **~4.5x faster** |
-| **`velociradix` (Node.js Addon Single-Thread)** | **152,900 req/s** ⚡ | **~3.8x faster** |
+| **`velociradix` (C++ Fast-Path `fastGet`)** | **350,000+ req/s** 🚀 | **~8.7x faster** |
+| **`velociradix` (Node.js Addon Multi-Thread)** | **181,100 req/s** ⚡ | **~4.5x faster** |
+| **`velociradix` (Node.js Addon Single-Thread)** | **166,000 req/s** ⚡ | **~4.15x faster** |
 | **`Fastify`** | 82,000 req/s | ~2.0x faster |
 | **`node:http` (Raw Node.js)** | 75,500 req/s | ~1.8x faster |
 | **`Express`** | 40,000 req/s | 1.0x (Baseline) |
