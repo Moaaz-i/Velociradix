@@ -176,7 +176,11 @@ static void split_path(const std::string& p, std::vector<std::string>& segs) {
     while (i < p.size()) {
         size_t slash = p.find('/', i);
         size_t end = (slash == std::string::npos) ? p.size() : slash;
-        if (end > i) segs.emplace_back(p, i, end - i);
+        if (end > i) {
+            std::string seg(p, i, end - i);
+            if (seg.find('%') != std::string::npos) seg = url_decode(seg);
+            segs.push_back(std::move(seg));
+        }
         if (slash == std::string::npos) break;
         i = slash + 1;
     }
@@ -405,12 +409,24 @@ static long parse_request(char* data, size_t len, Request& req) {
     if (!sp2) return -1;
     const char* ts = p;
     const char* qmark = (const char*)memchr(ts, '?', (size_t)(sp2 - ts));
-    if (qmark) {
+    if (!qmark) {
+        const char* qenc = nullptr;
+        for (const char* k = ts; k + 2 < sp2; ++k) {
+            if (*k == '%' && k[1] == '3' && (k[2] == 'F' || k[2] == 'f')) {
+                qenc = k;
+                break;
+            }
+        }
+        if (qenc) {
+            req.path = std::string_view(ts, qenc - ts);
+            req.query_string = std::string_view(qenc + 3, sp2 - (qenc + 3));
+        } else {
+            req.path = std::string_view(ts, sp2 - ts);
+            req.query_string = std::string_view();
+        }
+    } else {
         req.path = std::string_view(ts, qmark - ts);
         req.query_string = std::string_view(qmark + 1, (sp2 - qmark) - 1);
-    } else {
-        req.path = std::string_view(ts, sp2 - ts);
-        req.query_string = std::string_view();
     }
     p = sp2 + 1;
     const char* le = (const char*)memchr(p, '\r', (size_t)(end - p));

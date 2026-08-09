@@ -114,26 +114,20 @@ class Request {
   }
   _reset(ptr) {
     this._ptr = ptr;
-    delete this.method;
-    delete this.path;
-    delete this.query;
-    delete this.body;
-    delete this.headers;
-    delete this.params;
+    this._method = undefined;
+    this._path = undefined;
+    this._query = undefined;
+    this._body = undefined;
+    this._headers = undefined;
+    this._params = undefined;
   }
-  get method() { return cacheField(this, 'method', native.getMethod); }
+  get method() { return this._method ??= (native.getMethod(this._ptr) || 'GET'); }
   get url() { return this.path; }
-  get path() { return cacheField(this, 'path', native.getPath); }
-  get query() { return cacheField(this, 'query', native.getQuery); }
-  get body() { return cacheField(this, 'body', native.getBody); }
-  get headers() { return cacheField(this, 'headers', native.getHeaders); }
-  get params() { return cacheField(this, 'params', native.getParams); }
-}
-
-function cacheField(obj, key, getter) {
-  const v = getter(obj._ptr);
-  Object.defineProperty(obj, key, { value: v, writable: true, enumerable: true, configurable: true });
-  return v;
+  get path() { return this._path ??= (native.getPath(this._ptr) || '/'); }
+  get query() { return this._query ??= native.getQuery(this._ptr); }
+  get body() { return this._body ??= native.getBody(this._ptr); }
+  get headers() { return this._headers ??= (native.getHeaders(this._ptr) || {}); }
+  get params() { return this._params ??= (native.getParams(this._ptr) || {}); }
 }
 
 const MAX_POOL_SIZE = 8192;

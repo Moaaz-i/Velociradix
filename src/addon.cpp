@@ -47,7 +47,7 @@ struct PendingCall {
     int route_id = 0;
     std::string_view method, path, query, body;
     std::vector<std::pair<std::string_view, std::string_view>> headers;
-    std::vector<std::pair<std::string_view, std::string_view>> params;
+    std::vector<std::pair<std::string, std::string>> params;
 
     // Set exactly once, by js_respond (normal) or js_sse_begin (SSE).
     std::atomic<bool> responded{false};
@@ -140,7 +140,7 @@ static napi_status make_string_map(napi_env env,
 }
 
 static napi_status make_params_map(napi_env env,
-                            const std::vector<std::pair<std::string_view, std::string_view>>& params,
+                            const std::vector<std::pair<std::string, std::string>>& params,
                             napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;

@@ -219,6 +219,13 @@ async function run() {
   const badReq = await j("/bad-request-test");
   console.log("GET /bad-request-test ->", badReq.status, badReq.text);
 
+  // Dynamic Route Parameter test (:id)
+  const userRes = await j("/api/users/123");
+  console.log("GET /api/users/123 ->", userRes.status, userRes.text);
+  if (!userRes.text.includes('"user":"123"')) {
+    throw new Error(`Params test failed! Expected "123", got: ${userRes.text}`);
+  }
+
   console.log("Closing app...");
   app.close();
   process.exit(0);
