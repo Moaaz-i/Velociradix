@@ -110,14 +110,7 @@ function decryptValue(encryptedText, secretKey) {
 // --- Request & Context Classes ---
 class Request {
   constructor(ptr) {
-    this._ptr = ptr;
-    this._method = undefined;
-    this._path = undefined;
-    this._query = undefined;
-    this._body = undefined;
-    this._headers = undefined;
-    this._params = undefined;
-    if (ptr) this._reset(ptr);
+    this._reset(ptr);
   }
   _reset(ptr) {
     this._ptr = ptr;
@@ -128,13 +121,13 @@ class Request {
     this._headers = undefined;
     this._params = undefined;
   }
-  get method() { return this._method || (this._method = native.getMethod(this._ptr) || 'GET'); }
+  get method() { return this._method ??= (native.getMethod(this._ptr) || 'GET'); }
   get url() { return this.path; }
-  get path() { return this._path || (this._path = native.getPath(this._ptr) || '/'); }
-  get query() { return this._query || (this._query = native.getQuery(this._ptr)); }
-  get body() { return this._body || (this._body = native.getBody(this._ptr)); }
-  get headers() { return this._headers || (this._headers = native.getHeaders(this._ptr) || {}); }
-  get params() { return this._params || (this._params = native.getParams(this._ptr) || {}); }
+  get path() { return this._path ??= (native.getPath(this._ptr) || '/'); }
+  get query() { return this._query ??= native.getQuery(this._ptr); }
+  get body() { return this._body ??= native.getBody(this._ptr); }
+  get headers() { return this._headers ??= (native.getHeaders(this._ptr) || {}); }
+  get params() { return this._params ??= (native.getParams(this._ptr) || {}); }
 }
 
 const MAX_POOL_SIZE = 8192;
@@ -167,15 +160,6 @@ function releaseContext(ctx) {
 
 class Context {
   constructor(ptr, appInstance) {
-    this._ptr = ptr;
-    this._app = appInstance;
-    this.statusCode = 200;
-    this.done = false;
-    this._headers = undefined;
-    this._state = undefined;
-    this._timers = undefined;
-    this._session = undefined;
-    this._sse = false;
     this._req = new Request(ptr);
     this._reset(ptr, appInstance);
   }
