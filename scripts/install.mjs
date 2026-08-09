@@ -20,6 +20,7 @@ function findHeaders() {
     process.env.VELOCIRADIX_NODE_INC,
     path.join(root, 'deps', `node-${verNoV}`, 'include', 'node'),
     path.join(os.homedir(), '.node-gyp', verNoV, 'include', 'node'),
+    path.join(os.homedir(), '.node-gyp', verNoV, `node-${ver}`, 'include', 'node'),
     path.join(os.homedir(), '.node-gyp', ver, 'include', 'node'),
   ].filter(Boolean);
   for (const c of candidates) if (hasHeader(c)) return c;
