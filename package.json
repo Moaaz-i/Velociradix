@@ -1,6 +1,6 @@
 {
   "name": "velociradix",
-  "version": "6.0.9",
+  "version": "6.0.10",
   "description": "Zero-dependency, pure C++17 HTTP engine — event-driven (kqueue/epoll), trie router, middleware, SSE, CORS, static files. ~3.5x faster than node:http.",
   "author": "moaaz yahia zakaria",
   "license": "MIT",
