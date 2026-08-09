@@ -45,8 +45,8 @@ struct PendingCall {
     bool keep_alive = true;
 
     int route_id = 0;
-    std::string_view method, path, query, body;
-    std::vector<std::pair<std::string_view, std::string_view>> headers;
+    std::string method, path, query, body;
+    std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> params;
 
     // Set exactly once, by js_respond (normal) or js_sse_begin (SSE).
@@ -64,6 +64,10 @@ static PendingCall* acquire_pending_call() {
         pc->responded.store(false);
         pc->sse_closed.store(false);
         pc->sse_cb_ref = nullptr;
+        pc->method.clear();
+        pc->path.clear();
+        pc->query.clear();
+        pc->body.clear();
         pc->headers.clear();
         pc->params.clear();
         return pc;
@@ -124,7 +128,7 @@ static inline void mk_string(napi_env env, std::string_view s, napi_value* out) 
 }
 
 static napi_status make_string_map(napi_env env,
-                            const std::vector<std::pair<std::string_view, std::string_view>>& kv,
+                            const std::vector<std::pair<std::string, std::string>>& kv,
                             napi_value* out) {
     napi_status st = napi_create_object(env, out);
     if (st != napi_ok) return st;
@@ -312,7 +316,7 @@ static void dispatch_js(napi_env env, napi_value /*js_cb*/, void* context, void*
 // Lazy request accessors (called from JS only while the PendingCall is alive:
 // i.e. before js_respond frees it, which happens after the handler returns).
 // ---------------------------------------------------------------------------
-static napi_value js_get_field(napi_env env, napi_callback_info info, std::string_view PendingCall::*member) {
+static napi_value js_get_field(napi_env env, napi_callback_info info, const std::string PendingCall::*member) {
     size_t argc = 1;
     napi_value argv[1];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
@@ -398,14 +402,14 @@ static napi_value js_get_header(napi_env env, napi_callback_info info) {
         napi_get_undefined(env, &undef);
         return undef;
     }
-    char buf[128];
-    size_t len = 0;
-    if (napi_get_value_string_utf8(env, argv[1], buf, sizeof(buf), &len) == napi_ok) {
+    std::string name = js_to_string(env, argv[1]);
+    size_t len = name.size();
+    if (len > 0) {
         for (const auto& h : pc->headers) {
             if (h.first.size() == len) {
                 bool match = true;
                 for (size_t i = 0; i < len; ++i) {
-                    if (std::tolower((unsigned char)h.first[i]) != std::tolower((unsigned char)buf[i])) {
+                    if (std::tolower((unsigned char)h.first[i]) != std::tolower((unsigned char)name[i])) {
                         match = false;
                         break;
                     }

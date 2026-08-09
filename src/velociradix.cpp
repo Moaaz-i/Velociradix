@@ -542,6 +542,8 @@ bool App::match_route(TrieNode* node, const std::string& method,
                       std::unordered_map<std::string, std::string>& params) {
     if (idx == segs.size()) {
         auto it = node->methods.find(method);
+        if (it == node->methods.end()) it = node->methods.find("ALL");
+        if (it == node->methods.end() && method == "HEAD") it = node->methods.find("GET");
         if (it != node->methods.end()) {
             out = it->second.first;
             out_mws = it->second.second;
@@ -549,6 +551,8 @@ bool App::match_route(TrieNode* node, const std::string& method,
         }
         if (node->wildcard_child) {
             auto wit = node->wildcard_child->methods.find(method);
+            if (wit == node->wildcard_child->methods.end()) wit = node->wildcard_child->methods.find("ALL");
+            if (wit == node->wildcard_child->methods.end() && method == "HEAD") wit = node->wildcard_child->methods.find("GET");
             if (wit != node->wildcard_child->methods.end()) {
                 out = wit->second.first;
                 out_mws = wit->second.second;
@@ -581,6 +585,8 @@ bool App::match_route(TrieNode* node, const std::string& method,
             return true;
         }
         auto wit = node->wildcard_child->methods.find(method);
+        if (wit == node->wildcard_child->methods.end()) wit = node->wildcard_child->methods.find("ALL");
+        if (wit == node->wildcard_child->methods.end() && method == "HEAD") wit = node->wildcard_child->methods.find("GET");
         if (wit != node->wildcard_child->methods.end()) {
             out = wit->second.first;
             out_mws = wit->second.second;
