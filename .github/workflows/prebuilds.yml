@@ -86,5 +86,14 @@ jobs:
           ls -R prebuilds/
 
       - name: Publish to NPM
-        run: npm publish --access public --provenance
+        run: |
+          LOCAL_VER=$(node -p "require('./package.json').version")
+          REMOTE_VER=$(npm view velociradix@$LOCAL_VER version 2>/dev/null || true)
+          if [ "$REMOTE_VER" = "$LOCAL_VER" ]; then
+            echo "::notice::Version velociradix@$LOCAL_VER is already published on npm. Skipping publish."
+          else
+            echo "Publishing velociradix@$LOCAL_VER to npm..."
+            npm publish --access public --provenance
+          fi
+
 
