@@ -4,6 +4,14 @@
   "description": "Zero-dependency, pure C++17 HTTP engine — event-driven (kqueue/epoll), trie router, middleware, SSE, CORS, static files. ~3.5x faster than node:http.",
   "author": "moaaz yahia zakaria",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Moaaz-i/Velociradix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Moaaz-i/Velociradix/issues"
+  },
+  "homepage": "https://github.com/Moaaz-i/Velociradix#readme",
   "type": "module",
   "main": "index.mjs",
   "types": "./index.d.ts",
