@@ -555,12 +555,24 @@ function respondValue(ctx, status, value) {
 // --- Built-in Middlewares ---
 function loggerMiddleware(opts = {}) {
   const logFn = opts.logger ?? console.log;
+  const includeRes = opts.includeRes ?? false;
   return async (ctx, next) => {
     const start = Date.now();
     try {
       await next();
+    } catch (err) {
+      const errStatus = (ctx.statusCode && ctx.statusCode !== 200)
+        ? ctx.statusCode
+        : (err instanceof HttpError ? err.status : ((err && err.status) || 500));
+      ctx.statusCode = errStatus;
+      throw err;
     } finally {
-      logFn(`${ctx.req.method} ${ctx.req.path} -> ${ctx.statusCode} (${Date.now() - start}ms)`);
+      const duration = Date.now() - start;
+      if (includeRes) {
+        logFn(`${ctx.req.method} ${ctx.req.path} -> ${ctx.statusCode} (${duration}ms) [res: status=${ctx.statusCode}, done=${ctx.done}]`);
+      } else {
+        logFn(`${ctx.req.method} ${ctx.req.path} -> ${ctx.statusCode} (${duration}ms)`);
+      }
     }
   };
 }

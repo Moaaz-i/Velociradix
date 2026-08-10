@@ -121,6 +121,8 @@ export interface HelmetOptions {
 export interface LoggerOptions {
   /** Custom logging function (default: console.log) */
   logger?: (msg: string) => void;
+  /** Optionally include detailed response object stats in logs (default: false) */
+  includeRes?: boolean;
 }
 
 /** Cookie Session options */
