@@ -9,7 +9,6 @@ import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from 'node:module';
 import { extname, resolve } from "node:path";
-import { getPostmanDocHtml, getSwaggerHtml } from "./src/templates.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -1077,6 +1076,166 @@ function faviconMiddleware(opts = {}) {
     }
     return next();
   };
+}
+
+function getPostmanDocHtml(collection) {
+  const requestListItems = collection.item.map((item, idx) => `
+        <div class="request-item" onclick="scrollToReq('req-${idx}')">
+          <span class="badge badge-${item.request.method.toLowerCase()}">${item.request.method}</span>
+          <span>${item.name}</span>
+        </div>
+      `).join('');
+
+  const requestCards = collection.item.map((item, idx) => `
+      <div class="request-card" id="req-${idx}">
+        <div class="request-card-header">
+          <span class="badge badge-${item.request.method.toLowerCase()}">${item.request.method}</span>
+          <span class="request-card-title">${item.name}</span>
+        </div>
+        <div class="url-bar">
+          <strong style="color: var(--method-${item.request.method.toLowerCase()})">${item.request.method}</strong>
+          <span>${item.request.url.raw}</span>
+        </div>
+        ${item.request.description ? `<div class="request-card-desc">${item.request.description}</div>` : ''}
+
+        ${item.request.header && item.request.header.length > 0 ? `
+          <div class="section-title">Headers</div>
+          <table>
+            <thead><tr><th>Key</th><th>Value</th></tr></thead>
+            <tbody>
+              ${item.request.header.map(h => `<tr><td><code>${h.key}</code></td><td><code>${h.value}</code></td></tr>`).join('')}
+            </tbody>
+          </table>
+        ` : ''}
+
+        ${item.request.body && item.request.body.raw ? `
+          <div class="section-title">Body (JSON Raw)</div>
+          <div class="code-block">${item.request.body.raw}</div>
+        ` : ''}
+      </div>
+    `).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${collection.info.name} — Postman API Documentation</title>
+  <style>
+    :root {
+      --postman-orange: #FF6C37;
+      --bg-dark: #1C1C1C;
+      --bg-panel: #262626;
+      --bg-hover: #333333;
+      --text-main: #E6E6E6;
+      --text-muted: #A6A6A6;
+      --border-color: #383838;
+      --method-get: #0CBB52;
+      --method-post: #FF6C37;
+      --method-put: #097BED;
+      --method-patch: #E5A000;
+      --method-delete: #EB2013;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+    .sidebar { width: 320px; background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
+    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px; }
+    .sidebar-header svg { width: 28px; height: 28px; fill: var(--postman-orange); }
+    .sidebar-header h2 { font-size: 16px; font-weight: 600; color: #FFF; }
+    .search-box { padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+    .search-box input { width: 100%; padding: 8px 12px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 4px; color: #FFF; font-size: 13px; outline: none; }
+    .search-box input:focus { border-color: var(--postman-orange); }
+    .request-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .request-item { padding: 10px 16px; display: flex; align-items: center; gap: 10px; cursor: pointer; border-left: 3px solid transparent; font-size: 13px; transition: background 0.15s; }
+    .request-item:hover { background: var(--bg-hover); }
+    .request-item.active { background: var(--bg-hover); border-left-color: var(--postman-orange); font-weight: 600; }
+    .badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 3px; min-width: 52px; text-align: center; text-transform: uppercase; }
+    .badge-get { color: var(--method-get); background: rgba(12, 187, 82, 0.15); }
+    .badge-post { color: var(--method-post); background: rgba(255, 108, 55, 0.15); }
+    .badge-put { color: var(--method-put); background: rgba(9, 123, 237, 0.15); }
+    .badge-patch { color: var(--method-patch); background: rgba(229, 160, 0, 0.15); }
+    .badge-delete { color: var(--method-delete); background: rgba(235, 32, 19, 0.15); }
+    .main-content { flex: 1; overflow-y: auto; padding: 32px 48px; }
+    .collection-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-color); padding-bottom: 24px; }
+    .collection-title { font-size: 24px; font-weight: 700; color: #FFF; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+    .download-btn { background: var(--postman-orange); color: #FFF; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
+    .download-btn:hover { background: #E55B2B; }
+    .collection-desc { color: var(--text-muted); font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
+    .request-card { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 32px; padding: 24px; }
+    .request-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .request-card-title { font-size: 18px; font-weight: 600; color: #FFF; }
+    .url-bar { background: var(--bg-dark); border: 1px solid var(--border-color); padding: 10px 14px; border-radius: 6px; font-family: monospace; font-size: 13px; color: #FFF; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; word-break: break-all; }
+    .request-card-desc { color: var(--text-muted); font-size: 14px; white-space: pre-wrap; margin-bottom: 20px; line-height: 1.5; }
+    .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin: 16px 0 8px; letter-spacing: 0.5px; }
+    .code-block { background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 14px; font-family: monospace; font-size: 13px; color: #7DD3FC; overflow-x: auto; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
+    th { color: var(--text-muted); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <svg viewBox="0 0 32 32"><path d="M16 2A14 14 0 1 0 30 16 14 14 0 0 0 16 2zm6.2 11.4-3.6 3.6a3.8 3.8 0 0 1-5.4-5.4l3.6-3.6a1.4 1.4 0 0 1 2 2l-3.6 3.6a1 1 0 0 0 1.4 1.4l3.6-3.6a1.4 1.4 0 0 1 2 2z"/></svg>
+      <h2>Postman API Docs</h2>
+    </div>
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Filter requests..." oninput="filterRequests()" />
+    </div>
+    <div class="request-list" id="requestList">
+      ${requestListItems}
+    </div>
+  </div>
+  <div class="main-content">
+    <div class="collection-header">
+      <div class="collection-title">
+        <span>${collection.info.name}</span>
+        <button class="download-btn" onclick="downloadJSON()">Export Postman v2.1.0</button>
+      </div>
+      <div class="collection-desc">${collection.info.description || ''}</div>
+    </div>
+    ${requestCards}
+  </div>
+  <script>
+    const collectionData = ${JSON.stringify(collection, null, 2)};
+    function downloadJSON() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(collectionData, null, 2));
+      const a = document.createElement('a');
+      a.setAttribute("href", dataStr);
+      a.setAttribute("download", "${collection.info.name.replace(/\s+/g, '_')}_postman_collection.json");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    function scrollToReq(id) {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    }
+    function filterRequests() {
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      const items = document.querySelectorAll('.request-item');
+      items.forEach(el => {
+        el.style.display = el.textContent.toLowerCase().includes(q) ? 'flex' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function getSwaggerHtml(spec) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Velociradix API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@4.5.0/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@4.5.0/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({ spec: ${JSON.stringify(spec)}, dom_id: '#swagger-ui' });
+  </script>
+</body>
+</html>`;
 }
 
 function createApp() {
