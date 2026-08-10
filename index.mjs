@@ -174,6 +174,7 @@ class Context {
     this._timers = undefined;
     this._session = undefined;
     this._sse = false;
+    this.query = Context.prototype.query;
     this._req._reset(ptr);
   }
 
@@ -406,6 +407,10 @@ class Context {
     return sanitizeString(str);
   }
   validate(schema) {
+    if (!schema) return true;
+    if (typeof schema.safeParse === 'function' || typeof schema.parse === 'function') {
+      schema = { body: schema };
+    }
     if (schema.params) {
       const err = schema.params(this.params);
       if (err) throw new BadRequestError(`Invalid params: ${err}`);
@@ -413,6 +418,32 @@ class Context {
     if (schema.query) {
       const err = schema.query(queryParse(this.req.query));
       if (err) throw new BadRequestError(`Invalid query: ${err}`);
+    }
+    if (schema.body) {
+      let parsedBody = {};
+      if (this.req.body) {
+        try { parsedBody = JSON.parse(this.req.body); } catch { parsedBody = this.req.body; }
+      }
+      if (typeof schema.body.safeParse === 'function') {
+        const result = schema.body.safeParse(parsedBody);
+        if (!result.success) {
+          const formatted = result.error?.issues ? result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ') : (result.error?.message || 'Validation failed');
+          throw new BadRequestError(`Invalid body: ${formatted}`);
+        }
+      } else if (typeof schema.body.parse === 'function') {
+        try {
+          schema.body.parse(parsedBody);
+        } catch (e) {
+          throw new BadRequestError(`Invalid body: ${e.message}`);
+        }
+      } else if (typeof schema.body === 'function') {
+        const err = schema.body(parsedBody);
+        if (err) throw new BadRequestError(`Invalid body: ${err}`);
+      }
+    }
+    if (schema.headers) {
+      const err = schema.headers(this.req.headers);
+      if (err) throw new BadRequestError(`Invalid headers: ${err}`);
     }
     return true;
   }
@@ -524,8 +555,11 @@ function loggerMiddleware(opts = {}) {
   const logFn = opts.logger ?? console.log;
   return async (ctx, next) => {
     const start = Date.now();
-    await next();
-    logFn(`${ctx.req.method} ${ctx.req.path} -> ${ctx.statusCode} (${Date.now() - start}ms)`);
+    try {
+      await next();
+    } finally {
+      logFn(`${ctx.req.method} ${ctx.req.path} -> ${ctx.statusCode} (${Date.now() - start}ms)`);
+    }
   };
 }
 
@@ -597,17 +631,35 @@ function csrfMiddleware(opts = {}) {
 
 function cacheMiddleware(opts = {}) {
   const ttlMs = opts.ttlMs ?? 10000;
+  const maxSize = opts.maxSize ?? 1000;
   const store = new Map();
+
+  const gcTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of store.entries()) {
+      if (now >= record.exp) store.delete(key);
+    }
+  }, Math.max(ttlMs, 5000));
+  if (gcTimer.unref) gcTimer.unref();
+
   return (ctx, next) => {
     if (ctx.req.method !== 'GET') return next();
     const key = ctx.req.url;
+    const now = Date.now();
     const cached = store.get(key);
-    if (cached && Date.now() < cached.exp) {
+    if (cached && now < cached.exp) {
       ctx.set(cached.headers);
       return ctx.status(cached.status).send(cached.body);
     }
+    if (cached) {
+      store.delete(key);
+    }
     const origSend = ctx.send.bind(ctx);
     ctx.send = (body) => {
+      if (store.size >= maxSize) {
+        const firstKey = store.keys().next().value;
+        if (firstKey !== undefined) store.delete(firstKey);
+      }
       store.set(key, {
         body,
         headers: ctx._headers || {},
@@ -638,6 +690,19 @@ function validateMiddleware(schema = {}) {
 
 function sanitizeMiddleware() {
   return async (ctx, next) => {
+    const rawParams = ctx.params;
+    if (rawParams) {
+      for (const k in rawParams) {
+        if (typeof rawParams[k] === 'string') {
+          rawParams[k] = sanitizeString(rawParams[k]);
+        }
+      }
+    }
+    const origQuery = ctx.query;
+    ctx.query = function(k) {
+      const val = origQuery.call(this, k);
+      return typeof val === 'string' ? sanitizeString(val) : val;
+    };
     await next();
   };
 }
@@ -657,14 +722,29 @@ function sessionMiddleware(opts = {}) {
 function slowDownMiddleware(opts = {}) {
   const delayMs = opts.delayMs ?? 500;
   const delayAfter = opts.delayAfter ?? 5;
+  const windowMs = opts.windowMs ?? opts.resetTimeMs ?? 60000;
   const hits = new Map();
+
+  const gcTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of hits.entries()) {
+      if (now > record.resetTime) hits.delete(key);
+    }
+  }, Math.max(windowMs, 5000));
+  if (gcTimer.unref) gcTimer.unref();
 
   return async (ctx, next) => {
     const ip = ctx.ip;
-    const count = (hits.get(ip) || 0) + 1;
-    hits.set(ip, count);
-    if (count > delayAfter) {
-      const extraDelay = (count - delayAfter) * delayMs;
+    const now = Date.now();
+    let record = hits.get(ip);
+    if (!record || now > record.resetTime) {
+      record = { count: 1, resetTime: now + windowMs };
+      hits.set(ip, record);
+    } else {
+      record.count++;
+    }
+    if (record.count > delayAfter) {
+      const extraDelay = (record.count - delayAfter) * delayMs;
       await new Promise((r) => setTimeout(r, extraDelay));
     }
     return next();

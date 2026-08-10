@@ -97,12 +97,16 @@ export interface SlowDownOptions {
   delayMs?: number;
   /** Request count threshold before slowing down (default: 5) */
   delayAfter?: number;
+  /** Time window in milliseconds for resetting hit counts (default: 60000) */
+  windowMs?: number;
 }
 
 /** In-Memory Response Cache options */
 export interface CacheOptions {
   /** Time-To-Live duration in milliseconds for cached response (default: 10000) */
   ttlMs?: number;
+  /** Maximum number of entries stored in cache before LRU eviction (default: 1000) */
+  maxSize?: number;
 }
 
 /** Helmet Security Headers options */
@@ -165,14 +169,20 @@ export interface OpenAPISpecOptions {
   description?: string;
 }
 
+/** Zod-like or Custom Schema Validator Interface */
+export interface ZodLikeSchema {
+  safeParse?: (data: unknown) => { success: boolean; data?: unknown; error?: { issues?: Array<{ path: (string | number)[]; message: string }>; message?: string } };
+  parse?: (data: unknown) => unknown;
+}
+
 /** Schema validation object interface */
 export interface SchemaValidationObject {
   /** Function validating route parameters */
   params?: (params: Record<string, string>) => string | undefined;
   /** Function validating URL query string */
   query?: (query: Record<string, string>) => string | undefined;
-  /** Function validating request body */
-  body?: (body: JsonValue) => string | undefined;
+  /** Function or Zod-like schema validating request body */
+  body?: ((body: JsonValue) => string | undefined) | ZodLikeSchema;
   /** Function validating request headers */
   headers?: (headers: Record<string, string>) => string | undefined;
 }
@@ -415,8 +425,8 @@ export interface Context extends Response {
   /** Generates or retrieves double-submit CSRF cookie token */
   csrfToken(): string;
 
-  /** Validates request parameters or query string using validation callbacks */
-  validate(schema: SchemaValidationObject): boolean;
+  /** Validates request parameters, query string, or body using validation callbacks or Zod schemas */
+  validate(schema: SchemaValidationObject | ZodLikeSchema): boolean;
 
   /** Checks Content-Type acceptability against requested types */
   accepts(...types: string[]): string | boolean;
