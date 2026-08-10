@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from 'node:module';
 import { extname, resolve } from "node:path";
+import { getPostmanDocHtml, getSwaggerHtml } from "./src/templates.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -800,6 +801,272 @@ function helmetMiddleware(opts = {}) {
   };
 }
 
+// 1. IP Restriction / Whitelist / Blacklist Middleware
+function ipFilterMiddleware(opts = {}) {
+  const allow = opts.allow ? new Set(opts.allow) : null;
+  const deny = opts.deny ? new Set(opts.deny) : null;
+  const statusCode = opts.statusCode ?? 403;
+  return (ctx, next) => {
+    const clientIp = ctx.ip;
+    if (deny && deny.has(clientIp)) return ctx.status(statusCode).send('Forbidden IP');
+    if (allow && !allow.has(clientIp)) return ctx.status(statusCode).send('IP Not Allowed');
+    return next();
+  };
+}
+
+// 2. Response Time Header Middleware
+function responseTimeMiddleware(opts = {}) {
+  const headerName = opts.headerName ?? 'X-Response-Time';
+  const digits = opts.digits ?? 2;
+  return async (ctx, next) => {
+    const start = process.hrtime.bigint();
+    await next();
+    const duration = Number(process.hrtime.bigint() - start) / 1e6;
+    ctx.setHeader(headerName, `${duration.toFixed(digits)}ms`);
+  };
+}
+
+// 3. Request Size Limiter Middleware
+function sizeLimitMiddleware(opts = {}) {
+  const maxSize = opts.maxSize ?? 1024 * 1024; // 1MB default
+  return (ctx, next) => {
+    const len = parseInt(ctx.get('content-length') || '0', 10);
+    if (len > maxSize) return ctx.status(413).send('Payload Too Large');
+    return next();
+  };
+}
+
+// 4. Maintenance Mode Middleware
+function maintenanceMiddleware(opts = {}) {
+  const enabled = opts.enabled ?? true;
+  const message = opts.message ?? 'Service Unavailable for Maintenance';
+  const retryAfter = opts.retryAfter ?? 300;
+  return (ctx, next) => {
+    if (typeof enabled === 'function' ? enabled(ctx) : enabled) {
+      ctx.setHeader('Retry-After', String(retryAfter));
+      return ctx.status(530).send(message);
+    }
+    return next();
+  };
+}
+
+// 5. Basic Authentication Middleware
+function basicAuthMiddleware(opts = {}) {
+  const users = opts.users ?? {};
+  const realm = opts.realm ?? 'Secure Area';
+  return (ctx, next) => {
+    const creds = ctx.basicAuth();
+    if (!creds || !users[creds.username] || users[creds.username] !== creds.password) {
+      ctx.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
+      return ctx.status(401).send('Unauthorized');
+    }
+    ctx.state.user = creds.username;
+    return next();
+  };
+}
+
+// 6. Security Headers (Permissions Policy & CSP) Middleware
+function cspMiddleware(opts = {}) {
+  const policy = opts.policy ?? "default-src 'self'";
+  return (ctx, next) => {
+    ctx.setHeader('Content-Security-Policy', policy);
+    return next();
+  };
+}
+
+// 7. Timeout Middleware
+function timeoutMiddleware(opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  return (ctx, next) => {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        if (!ctx.done) {
+          ctx.status(504).send('Gateway Timeout');
+        }
+        reject(new Error('Request Timeout'));
+      }, timeoutMs);
+    });
+    return Promise.race([next(), timeoutPromise]).finally(() => clearTimeout(timer));
+  };
+}
+
+// 8. CORS Preflight & Methods Guard Middleware
+function methodOverrideMiddleware(opts = {}) {
+  const headerName = opts.headerName ?? 'x-http-method-override';
+  return (ctx, next) => {
+    const override = ctx.get(headerName);
+    if (override && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(override.toUpperCase())) {
+      ctx.req._method = override.toUpperCase();
+    }
+    return next();
+  };
+}
+
+// 9. API Key Authorization Middleware
+function apiKeyMiddleware(opts = {}) {
+  const keys = new Set(opts.keys ?? []);
+  const headerName = opts.headerName ?? 'x-api-key';
+  const queryName = opts.queryName ?? 'api_key';
+  return (ctx, next) => {
+    const key = ctx.get(headerName) || ctx.query(queryName);
+    if (!key || !keys.has(key)) {
+      return ctx.status(401).json({ error: 'Invalid or missing API key' });
+    }
+    return next();
+  };
+}
+
+// 10. HTTP Method Whitelist Guard Middleware
+function allowedMethodsMiddleware(opts = {}) {
+  const allowed = new Set((opts.methods ?? ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).map((m) => m.toUpperCase()));
+  return (ctx, next) => {
+    if (!allowed.has(ctx.req.method.toUpperCase())) {
+      ctx.setHeader('Allow', Array.from(allowed).join(', '));
+      return ctx.status(405).send('Method Not Allowed');
+    }
+    return next();
+  };
+}
+
+// 11. Custom Header Injection Middleware
+function headerInjectorMiddleware(headers = {}) {
+  return (ctx, next) => {
+    ctx.set(headers);
+    return next();
+  };
+}
+
+// 12. Single URL Redirector Middleware
+function redirectorMiddleware(rules = {}) {
+  return (ctx, next) => {
+    const target = rules[ctx.req.path];
+    if (target) return ctx.redirect(target.url || target, target.code || 301);
+    return next();
+  };
+}
+
+// 13. Dynamic Request Throttler Middleware
+function concurrencyLimitMiddleware(opts = {}) {
+  const maxConcurrent = opts.maxConcurrent ?? 50;
+  let active = 0;
+  return async (ctx, next) => {
+    if (active >= maxConcurrent) {
+      return ctx.status(503).send('Server Busy');
+    }
+    active++;
+    try {
+      await next();
+    } finally {
+      active--;
+    }
+  };
+}
+
+// 14. ETag Auto Generator Middleware
+function etagMiddleware(opts = {}) {
+  const weak = opts.weak ?? true;
+  return async (ctx, next) => {
+    await next();
+    if (ctx.req.method === 'GET' && ctx._bodyData && !ctx.get('etag')) {
+      const hash = createHmac('sha256', 'velociradix-etag').update(String(ctx._bodyData)).digest('hex').slice(0, 16);
+      const tag = `${weak ? 'W/' : ''}"${hash}"`;
+      ctx.setHeader('ETag', tag);
+      if (ctx.get('if-none-match') === tag) {
+        return ctx.status(304).send('');
+      }
+    }
+  };
+}
+
+// 15. User Agent Blocker Middleware
+function userAgentBlockerMiddleware(opts = {}) {
+  const botPatterns = opts.bots ?? [/curl/i, /wget/i, /python-requests/i, /postman/i];
+  return (ctx, next) => {
+    const ua = ctx.get('user-agent') || '';
+    if (botPatterns.some((pattern) => pattern.test(ua))) {
+      return ctx.status(403).send('Automated User-Agent Blocked');
+    }
+    return next();
+  };
+}
+
+// 16. JSON Pre-Parser & Normalizer Middleware
+function bodyCleanerMiddleware(opts = {}) {
+  const trimStrings = opts.trim ?? true;
+  return async (ctx, next) => {
+    if (['POST', 'PUT', 'PATCH'].includes(ctx.req.method) && ctx.is('json')) {
+      try {
+        const bodyObj = await ctx.body();
+        if (trimStrings && bodyObj && typeof bodyObj === 'object') {
+          for (const key in bodyObj) {
+            if (typeof bodyObj[key] === 'string') bodyObj[key] = bodyObj[key].trim();
+          }
+        }
+        ctx.state.cleanedBody = bodyObj;
+      } catch {}
+    }
+    return next();
+  };
+}
+
+// 17. Conditional Request Guard (If-Match / If-Modified-Since) Middleware
+function conditionalRequestMiddleware() {
+  return (ctx, next) => {
+    const ifModifiedSince = ctx.get('if-modified-since');
+    if (ifModifiedSince && ctx.req.method === 'GET') {
+      const modifiedTime = new Date(ifModifiedSince).getTime();
+      if (!isNaN(modifiedTime) && Date.now() <= modifiedTime) {
+        return ctx.status(304).send('');
+      }
+    }
+    return next();
+  };
+}
+
+// 18. Host Header Guard Middleware
+function hostGuardMiddleware(opts = {}) {
+  const allowedHosts = new Set(opts.hosts ?? []);
+  return (ctx, next) => {
+    const host = (ctx.get('host') || '').split(':')[0];
+    if (allowedHosts.size > 0 && !allowedHosts.has(host)) {
+      return ctx.status(400).send('Invalid Host Header');
+    }
+    return next();
+  };
+}
+
+// 19. Request Audit / Event Emitting Middleware
+function auditLogMiddleware(opts = {}) {
+  const onAudit = opts.onAudit ?? ((event) => console.log('[AUDIT]', JSON.stringify(event)));
+  return async (ctx, next) => {
+    const startTime = Date.now();
+    await next();
+    onAudit({
+      timestamp: new Date().toISOString(),
+      method: ctx.req.method,
+      path: ctx.req.path,
+      status: ctx.statusCode,
+      ip: ctx.ip,
+      durationMs: Date.now() - startTime,
+      user: ctx.state.user ?? null,
+    });
+  };
+}
+
+// 20. Favicon Fast Dismiss Middleware
+function faviconMiddleware(opts = {}) {
+  const icon = opts.icon ?? '';
+  return (ctx, next) => {
+    if (ctx.req.path === '/favicon.ico') {
+      ctx.setHeader('Content-Type', 'image/x-icon');
+      ctx.setHeader('Cache-Control', 'public, max-age=86400');
+      return ctx.status(200).send(icon);
+    }
+    return next();
+  };
+}
+
 function createApp() {
   const h = native.createApp();
   const mws = [];
@@ -937,157 +1204,7 @@ function createApp() {
     postmanDoc(docsPath = '/postman-docs', docOpts = {}) {
       app.get(docsPath, (ctx) => {
         const collection = app.postman(docOpts);
-        const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>${collection.info.name} — Postman API Documentation</title>
-  <style>
-    :root {
-      --postman-orange: #FF6C37;
-      --bg-dark: #1C1C1C;
-      --bg-panel: #262626;
-      --bg-hover: #333333;
-      --text-main: #E6E6E6;
-      --text-muted: #A6A6A6;
-      --border-color: #383838;
-      --method-get: #0CBB52;
-      --method-post: #FF6C37;
-      --method-put: #097BED;
-      --method-patch: #E5A000;
-      --method-delete: #EB2013;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    body { background: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
-
-    /* Sidebar */
-    .sidebar { width: 320px; background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
-    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px; }
-    .sidebar-header svg { width: 28px; height: 28px; fill: var(--postman-orange); }
-    .sidebar-header h2 { font-size: 16px; font-weight: 600; color: #FFF; }
-    .search-box { padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
-    .search-box input { width: 100%; padding: 8px 12px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 4px; color: #FFF; font-size: 13px; outline: none; }
-    .search-box input:focus { border-color: var(--postman-orange); }
-    .request-list { flex: 1; overflow-y: auto; padding: 8px 0; }
-    .request-item { padding: 10px 16px; display: flex; align-items: center; gap: 10px; cursor: pointer; border-left: 3px solid transparent; font-size: 13px; transition: background 0.15s; }
-    .request-item:hover { background: var(--bg-hover); }
-    .request-item.active { background: var(--bg-hover); border-left-color: var(--postman-orange); font-weight: 600; }
-
-    /* Method Badges */
-    .badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 3px; min-width: 52px; text-align: center; text-transform: uppercase; }
-    .badge-get { color: var(--method-get); background: rgba(12, 187, 82, 0.15); }
-    .badge-post { color: var(--method-post); background: rgba(255, 108, 55, 0.15); }
-    .badge-put { color: var(--method-put); background: rgba(9, 123, 237, 0.15); }
-    .badge-patch { color: var(--method-patch); background: rgba(229, 160, 0, 0.15); }
-    .badge-delete { color: var(--method-delete); background: rgba(235, 32, 19, 0.15); }
-
-    /* Main Content */
-    .main-content { flex: 1; overflow-y: auto; padding: 32px 48px; }
-    .collection-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-color); padding-bottom: 24px; }
-    .collection-title { font-size: 24px; font-weight: 700; color: #FFF; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
-    .download-btn { background: var(--postman-orange); color: #FFF; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
-    .download-btn:hover { background: #E55B2B; }
-    .collection-desc { color: var(--text-muted); font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
-
-    /* Request Section */
-    .request-card { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 32px; padding: 24px; }
-    .request-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-    .request-card-title { font-size: 18px; font-weight: 600; color: #FFF; }
-    .url-bar { background: var(--bg-dark); border: 1px solid var(--border-color); padding: 10px 14px; border-radius: 6px; font-family: monospace; font-size: 13px; color: #FFF; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; word-break: break-all; }
-    .request-card-desc { color: var(--text-muted); font-size: 14px; white-space: pre-wrap; margin-bottom: 20px; line-height: 1.5; }
-
-    .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin: 16px 0 8px; letter-spacing: 0.5px; }
-    .code-block { background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 14px; font-family: monospace; font-size: 13px; color: #7DD3FC; overflow-x: auto; white-space: pre-wrap; }
-
-    /* Table */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
-    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
-    th { color: var(--text-muted); font-weight: 600; }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <div class="sidebar-header">
-      <svg viewBox="0 0 32 32"><path d="M16 2A14 14 0 1 0 30 16 14 14 0 0 0 16 2zm6.2 11.4-3.6 3.6a3.8 3.8 0 0 1-5.4-5.4l3.6-3.6a1.4 1.4 0 0 1 2 2l-3.6 3.6a1 1 0 0 0 1.4 1.4l3.6-3.6a1.4 1.4 0 0 1 2 2z"/></svg>
-      <h2>Postman API Docs</h2>
-    </div>
-    <div class="search-box">
-      <input type="text" id="searchInput" placeholder="Filter requests..." oninput="filterRequests()" />
-    </div>
-    <div class="request-list" id="requestList">
-      ${collection.item.map((item, idx) => `
-        <div class="request-item" onclick="scrollToReq('req-${idx}')">
-          <span class="badge badge-${item.request.method.toLowerCase()}">${item.request.method}</span>
-          <span>${item.name}</span>
-        </div>
-      `).join('')}
-    </div>
-  </div>
-
-  <div class="main-content">
-    <div class="collection-header">
-      <div class="collection-title">
-        <span>${collection.info.name}</span>
-        <button class="download-btn" onclick="downloadJSON()">Export Postman v2.1.0</button>
-      </div>
-      <div class="collection-desc">${collection.info.description || ''}</div>
-    </div>
-
-    ${collection.item.map((item, idx) => `
-      <div class="request-card" id="req-${idx}">
-        <div class="request-card-header">
-          <span class="badge badge-${item.request.method.toLowerCase()}">${item.request.method}</span>
-          <span class="request-card-title">${item.name}</span>
-        </div>
-        <div class="url-bar">
-          <strong style="color: var(--method-${item.request.method.toLowerCase()})">${item.request.method}</strong>
-          <span>${item.request.url.raw}</span>
-        </div>
-        ${item.request.description ? `<div class="request-card-desc">${item.request.description}</div>` : ''}
-
-        ${item.request.header && item.request.header.length > 0 ? `
-          <div class="section-title">Headers</div>
-          <table>
-            <thead><tr><th>Key</th><th>Value</th></tr></thead>
-            <tbody>
-              ${item.request.header.map(h => `<tr><td><code>${h.key}</code></td><td><code>${h.value}</code></td></tr>`).join('')}
-            </tbody>
-          </table>
-        ` : ''}
-
-        ${item.request.body && item.request.body.raw ? `
-          <div class="section-title">Body (JSON Raw)</div>
-          <div class="code-block">${item.request.body.raw}</div>
-        ` : ''}
-      </div>
-    `).join('')}
-  </div>
-
-  <script>
-    const collectionData = ${JSON.stringify(collection, null, 2)};
-    function downloadJSON() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(collectionData, null, 2));
-      const a = document.createElement('a');
-      a.setAttribute("href", dataStr);
-      a.setAttribute("download", "${collection.info.name.replace(/\s+/g, '_')}_postman_collection.json");
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
-    function scrollToReq(id) {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-    }
-    function filterRequests() {
-      const q = document.getElementById('searchInput').value.toLowerCase();
-      const items = document.querySelectorAll('.request-item');
-      items.forEach(el => {
-        el.style.display = el.textContent.toLowerCase().includes(q) ? 'flex' : 'none';
-      });
-    }
-  </script>
-</body>
-</html>`;
-        return ctx.html(html);
+        return ctx.html(getPostmanDocHtml(collection));
       });
       return app;
     },
@@ -1109,21 +1226,7 @@ function createApp() {
     swagger(docsPath = '/docs') {
       app.get(docsPath, (ctx) => {
         const spec = app.openapi();
-        const html = `<!DOCTYPE html>
-<html>
-<head>
-  <title>Velociradix API Docs</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@4.5.0/swagger-ui.css" />
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@4.5.0/swagger-ui-bundle.js"></script>
-  <script>
-    SwaggerUIBundle({ spec: ${JSON.stringify(spec)}, dom_id: '#swagger-ui' });
-  </script>
-</body>
-</html>`;
-        return ctx.html(html);
+        return ctx.html(getSwaggerHtml(spec));
       });
       return app;
     },
@@ -1195,9 +1298,10 @@ function createApp() {
         result = runChain(chain, entry.handler, ctx);
       }
     } catch (err) {
+      const status = err instanceof HttpError ? err.status : ((err && err.status) || 500);
+      ctx.statusCode = status;
       if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
       if (onErr) { onErrorAsync(onErr, err, ctx); return; }
-      const status = err instanceof HttpError ? err.status : 500;
       respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
       releaseContext(ctx);
       return;
@@ -1211,10 +1315,11 @@ function createApp() {
         }
         releaseContext(ctx);
       }, (err) => {
+        const status = err instanceof HttpError ? err.status : ((err && err.status) || 500);
+        ctx.statusCode = status;
         if (!ctx.done) {
           if (emitter.listenerCount("error") > 0) emitter.emit("error", err, ctx);
           if (onErr) { onErrorAsync(onErr, err, ctx); return; }
-          const status = err instanceof HttpError ? err.status : 500;
           respondValue(ctx, status, { error: (err && err.message) || 'Internal Server Error', details: err.details });
         }
         releaseContext(ctx);
@@ -1265,34 +1370,74 @@ const middlewares = {
   slowDown: slowDownMiddleware,
   rateLimit: rateLimitMiddleware,
   helmet: helmetMiddleware,
+  ipFilter: ipFilterMiddleware,
+  responseTime: responseTimeMiddleware,
+  sizeLimit: sizeLimitMiddleware,
+  maintenance: maintenanceMiddleware,
+  basicAuth: basicAuthMiddleware,
+  csp: cspMiddleware,
+  timeout: timeoutMiddleware,
+  methodOverride: methodOverrideMiddleware,
+  apiKey: apiKeyMiddleware,
+  allowedMethods: allowedMethodsMiddleware,
+  headerInjector: headerInjectorMiddleware,
+  redirector: redirectorMiddleware,
+  concurrencyLimit: concurrencyLimitMiddleware,
+  etag: etagMiddleware,
+  userAgentBlocker: userAgentBlockerMiddleware,
+  bodyCleaner: bodyCleanerMiddleware,
+  conditionalRequest: conditionalRequestMiddleware,
+  hostGuard: hostGuardMiddleware,
+  auditLog: auditLogMiddleware,
+  favicon: faviconMiddleware,
 };
 
 export {
   app,
+  allowedMethodsMiddleware as allowedMethods,
+  apiKeyMiddleware as apiKey,
+  auditLogMiddleware as auditLog,
   BadRequestError,
+  basicAuthMiddleware as basicAuth,
   bearerAuthMiddleware as bearerAuth,
+  bodyCleanerMiddleware as bodyCleaner,
   cacheMiddleware as cache,
   compressMiddleware as compress,
+  concurrencyLimitMiddleware as concurrencyLimit,
+  conditionalRequestMiddleware as conditionalRequest,
   corsMiddleware as cors,
+  cspMiddleware as csp,
   createApp,
   csrfMiddleware as csrf,
   decryptValue,
   encryptValue,
+  etagMiddleware as etag,
+  faviconMiddleware as favicon,
   ForbiddenError,
+  headerInjectorMiddleware as headerInjector,
   helmetMiddleware as helmet,
+  hostGuardMiddleware as hostGuard,
   HttpError,
   InternalServerError,
+  ipFilterMiddleware as ipFilter,
   jwtAuthMiddleware as jwtAuth,
   jwtSign,
   jwtVerify,
   loggerMiddleware as logger,
+  maintenanceMiddleware as maintenance,
+  methodOverrideMiddleware as methodOverride,
   NotFoundError,
   rateLimitMiddleware as rateLimit,
+  redirectorMiddleware as redirector,
   requestIdMiddleware as requestId,
+  responseTimeMiddleware as responseTime,
   sanitizeMiddleware as sanitize,
   sessionMiddleware as session,
+  sizeLimitMiddleware as sizeLimit,
   slowDownMiddleware as slowDown,
+  timeoutMiddleware as timeout,
   UnauthorizedError,
+  userAgentBlockerMiddleware as userAgentBlocker,
   validateMiddleware as validate,
 };
 

@@ -27,15 +27,15 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 - 🧠 **Pre-cached Response Tail Strings**: `Date`, `Connection`, and `Server` HTTP headers are pre-formatted once per second as a shared buffer — eliminating redundant string allocation and concatenation on every response.
 - ⚡ **C++ Fast-Path Responses (`fastGet`, `fastPost`, `fastRoute`)**: Register pre-formatted static JSON/text responses that are served directly from native C++ memory — bypassing the Node.js V8 engine entirely for **350,000+ req/s**.
 - 📘 **Strict TypeScript 100%**: Zero `any`, zero `unknown`. Full TSDoc comments with `@example` code snippets for VS Code.
-- 🛡️ **40 Enterprise Features**:
-  - **Security**: `helmet()`, `cors()`, `rateLimit()`, `slowDown()`, `csrf()`, `bearerAuth()`, `jwtAuth()`.
+- 🛡️ **60+ Enterprise Features & Middlewares**:
+  - **Middlewares (20+ Built-in)**: `logger()`, `helmet()`, `cors()`, `rateLimit()`, `slowDown()`, `cache()`, `sanitize()`, `validate()`, `ipFilter()`, `responseTime()`, `sizeLimit()`, `maintenance()`, `basicAuth()`, `csp()`, `timeout()`, `methodOverride()`, `apiKey()`, `allowedMethods()`, `headerInjector()`, `redirector()`, `concurrencyLimit()`, `etag()`, `userAgentBlocker()`, `bodyCleaner()`, `conditionalRequest()`, `hostGuard()`, `auditLog()`, `favicon()`.
+  - **Zod & Schema First-Class Integration**: Direct schema object validation via `ctx.validate(zodSchema)` with `safeParse()` & `parse()` support out of the box.
   - **Auth & Crypto**: HMAC-SHA256 JWT sign/verify, AES-256-CBC encrypted cookies, signed sessions.
-  - **API Documentation**: Automatic OpenAPI 3.0 spec JSON generation & interactive Swagger UI at `/docs`.
+  - **API Documentation**: Automatic OpenAPI 3.0 spec JSON generation & interactive Swagger UI at `/docs` or Postman UI at `/postman-docs` with external clean HTML templates (`src/postman.html`, `src/swagger.html`).
   - **I/O & Media**: `ctx.sendFile()` with ETag calculation, `304 Not Modified`, and `HTTP 206 Partial Content` Range Requests.
   - **Streaming**: Native Server-Sent Events (`SSE`) streaming (`ctx.sse()`).
-  - **Compression & Caching**: Gzip/Deflate compression (`compress()`), In-Memory TTL response cache (`cache()`).
-  - **Observability**: `Server-Timing` APM headers (`ctx.time()`, `ctx.timeEnd()`), Request Correlation ID (`ctx.requestId`), `/health` check endpoints.
-  - **Developer Experience**: Micro HTML template engine (`ctx.renderHtml()`), XSS sanitizer (`ctx.sanitizeHtml()`), custom HTTP error classes (`BadRequestError`, `NotFoundError`, etc.), Express middleware compatibility (`useExpress`).
+  - **Compression & Caching**: Gzip/Deflate compression (`compress()`), In-Memory TTL & LRU eviction response cache (`cache()`).
+  - **Observability & Error Handling**: `Server-Timing` APM headers (`ctx.time()`, `ctx.timeEnd()`), Request Correlation ID (`ctx.requestId`), uncaught error bypass logging, `/health` check endpoints.
 
 ---
 

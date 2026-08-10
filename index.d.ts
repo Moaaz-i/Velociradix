@@ -617,6 +617,46 @@ export function slowDown(options?: SlowDownOptions): Middleware;
 export function rateLimit(options?: RateLimitOptions): Middleware;
 /** Helmet Security Headers middleware generator */
 export function helmet(options?: HelmetOptions): Middleware;
+/** IP Whitelist / Blacklist Filter middleware generator */
+export function ipFilter(options?: { allow?: string[]; deny?: string[]; statusCode?: number }): Middleware;
+/** Response Time Header middleware generator */
+export function responseTime(options?: { headerName?: string; digits?: number }): Middleware;
+/** Request Body Payload Size Limit middleware generator */
+export function sizeLimit(options?: { maxSize?: number }): Middleware;
+/** Maintenance Mode toggle middleware generator */
+export function maintenance(options?: { enabled?: boolean | ((ctx: Context) => boolean); message?: string; retryAfter?: number }): Middleware;
+/** Basic Auth Authentication middleware generator */
+export function basicAuth(options?: { users?: Record<string, string>; realm?: string }): Middleware;
+/** Content Security Policy header middleware generator */
+export function csp(options?: { policy?: string }): Middleware;
+/** Request Timeout middleware generator */
+export function timeout(options?: { timeoutMs?: number }): Middleware;
+/** HTTP Method Override header middleware generator */
+export function methodOverride(options?: { headerName?: string }): Middleware;
+/** API Key Authentication middleware generator */
+export function apiKey(options?: { keys?: string[]; headerName?: string; queryName?: string }): Middleware;
+/** HTTP Allowed Methods guard middleware generator */
+export function allowedMethods(options?: { methods?: string[] }): Middleware;
+/** Custom Response Header Injector middleware generator */
+export function headerInjector(headers?: Record<string, string>): Middleware;
+/** Route URL Redirector middleware generator */
+export function redirector(rules?: Record<string, string | { url: string; code?: number }>): Middleware;
+/** Concurrency Throttler middleware generator */
+export function concurrencyLimit(options?: { maxConcurrent?: number }): Middleware;
+/** ETag Generator middleware generator */
+export function etag(options?: { weak?: boolean }): Middleware;
+/** Bot & User Agent Blocker middleware generator */
+export function userAgentBlocker(options?: { bots?: RegExp[] }): Middleware;
+/** Request Body String Trimmer middleware generator */
+export function bodyCleaner(options?: { trim?: boolean }): Middleware;
+/** Conditional Request (If-Modified-Since) middleware generator */
+export function conditionalRequest(): Middleware;
+/** Host Header Guard middleware generator */
+export function hostGuard(options?: { hosts?: string[] }): Middleware;
+/** Audit Trail Logger middleware generator */
+export function auditLog(options?: { onAudit?: (event: Record<string, JsonValue>) => void }): Middleware;
+/** Favicon Fast Dismiss middleware generator */
+export function favicon(options?: { icon?: string }): Middleware;
 
 declare const velociradix: {
   app: App;
