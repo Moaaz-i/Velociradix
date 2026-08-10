@@ -174,6 +174,7 @@ class Context {
     this._timers = undefined;
     this._session = undefined;
     this._sse = false;
+    this._sanitizedQuery = false;
     this.query = Context.prototype.query;
     this._req._reset(ptr);
   }
@@ -698,11 +699,14 @@ function sanitizeMiddleware() {
         }
       }
     }
-    const origQuery = ctx.query;
-    ctx.query = function(k) {
-      const val = origQuery.call(this, k);
-      return typeof val === 'string' ? sanitizeString(val) : val;
-    };
+    if (!ctx._sanitizedQuery) {
+      const origQuery = ctx.query;
+      ctx.query = function(k) {
+        const val = origQuery.call(this, k);
+        return typeof val === 'string' ? sanitizeString(val) : val;
+      };
+      ctx._sanitizedQuery = true;
+    }
     await next();
   };
 }
