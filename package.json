@@ -69,6 +69,12 @@
     "build": "make",
     "test": "make test",
     "bench": "node bench/bench-addon.mjs 4",
-    "clean": "make clean"
+    "clean": "make clean",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
   }
 }
