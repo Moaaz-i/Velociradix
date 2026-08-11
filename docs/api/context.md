@@ -151,16 +151,18 @@ ctx.timeEnd('db-query'); // Injects Server-Timing: db-query;dur=1.45
 Initiates a Server-Sent Events HTTP stream (`Content-Type: text/event-stream`).
 
 ```js
-ctx.sse((stream) => {
-  stream.send({ event: 'ping', data: { time: Date.now() } });
-  
+ctx.sse((sendEvent, close) => {
+  sendEvent({ time: Date.now() }, 'ping');
+
   const timer = setInterval(() => {
-    stream.send({ data: 'heartbeat' });
+    sendEvent({ message: 'heartbeat' });
   }, 1000);
 
-  stream.onClose(() => {
+  // Close stream after 10 seconds
+  setTimeout(() => {
     clearInterval(timer);
-  });
+    close();
+  }, 10000);
 });
 ```
 
