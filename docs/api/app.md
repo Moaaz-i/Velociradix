@@ -1,6 +1,6 @@
 # Application (`app`) API Reference
 
-The `app` instance is the central application server created via `velociradix()` or `createApp()`.
+The `app` instance is the central application server created via `createApp()`.
 
 ---
 
