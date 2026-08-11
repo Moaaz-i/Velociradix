@@ -3,9 +3,10 @@
 .github/
 .gitignore
 
-# Tests & Benchmarks
+# Tests, Benchmarks & Documentation
 tests/
 bench/
+docs/
 smoke.mjs
 temp_test_report.txt
 
@@ -16,4 +17,6 @@ bin/
 # Logs & OS files
 .DS_Store
 *.log
+npm-debug.log*
 node_modules/
+

@@ -4,36 +4,62 @@ export default defineConfig({
   title: 'Velociradix',
   description: 'Zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework',
   themeConfig: {
-    logo: '/logo.svg',
+    search: {
+      provider: 'local',
+    },
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'API Reference', link: '/api/context' },
-      { text: 'Architecture', link: '/architecture' },
+      { text: 'Getting Started', link: '/guide/getting-started' },
+      { text: 'Middlewares', link: '/guide/middlewares' },
+      { text: 'API Reference', link: '/api/app' },
+      { text: 'Tools & Testing', link: '/guide/postman-swagger' },
     ],
     sidebar: [
       {
-        text: 'Getting Started',
+        text: '📖 Core Guide',
         items: [
-          { text: 'Introduction', link: '/guide/getting-started' },
+          { text: 'Introduction & Setup', link: '/guide/getting-started' },
           { text: 'Features Overview', link: '/guide/features' },
+          { text: 'Routing & Path Params', link: '/guide/routing' },
           { text: 'Performance & Benchmarks', link: '/guide/benchmarks' },
         ],
       },
       {
-        text: 'Middlewares & Security',
+        text: '⚙️ Middlewares & Validation',
         items: [
-          { text: 'Built-in Middlewares', link: '/guide/middlewares' },
+          { text: '20+ Built-in Middlewares', link: '/guide/middlewares' },
+          { text: 'Building Custom Middlewares', link: '/guide/custom-middlewares' },
           { text: 'Schema & Zod Validation', link: '/guide/validation' },
-          { text: 'JWT & Crypto Security', link: '/guide/security' },
+          { text: 'Express Middleware Shim', link: '/guide/express-compat' },
         ],
       },
       {
-        text: 'API Documentation',
+        text: '🔒 Security & Auth',
         items: [
-          { text: 'Application (`app`)', link: '/api/app' },
-          { text: 'Context (`ctx`)', link: '/api/context' },
-          { text: 'Response & Streaming', link: '/api/streaming' },
+          { text: 'JWT, Auth & Encryption', link: '/guide/security' },
+        ],
+      },
+      {
+        text: '🛠️ Documentation & Tools',
+        items: [
+          { text: 'Postman & Swagger UI', link: '/guide/postman-swagger' },
+          { text: 'Troubleshooting & FAQ', link: '/guide/troubleshooting' },
+        ],
+      },
+      {
+        text: '⚡ API Reference',
+        items: [
+          { text: 'Application Instance (`app`)', link: '/api/app' },
+          { text: 'Context (`ctx`) & Request', link: '/api/context' },
+          { text: 'Response & Streaming (`SSE`)', link: '/api/streaming' },
+          { text: 'Fast-Path C++ Routes', link: '/api/fast-path' },
+          { text: 'HTTP Error Classes', link: '/api/errors' },
+        ],
+      },
+      {
+        text: '🔬 Architecture & Internals',
+        items: [
+          { text: 'C++17 Engine Deep-Dive', link: '/architecture' },
         ],
       },
     ],

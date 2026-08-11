@@ -1110,8 +1110,13 @@ function getPostmanDocHtml(collection) {
 
         ${item.request.body && item.request.body.raw ? `
           <div class="section-title">Body (JSON Raw)</div>
-          <div class="code-block">${item.request.body.raw}</div>
+          <pre class="code-block">${item.request.body.raw}</pre>
         ` : ''}
+
+        ${item.response && item.response.length > 0 ? item.response.map(resp => `
+          <div class="section-title">Response Example: ${resp.name} (${resp.code})</div>
+          <pre class="code-block">${resp.body}</pre>
+        `).join('') : ''}
       </div>
     `).join('');
 
@@ -1258,7 +1263,7 @@ function createApp() {
         headers: options.headers || [],
         body: options.body || null,
         query: options.query || [],
-        sampleResponse: options.sampleResponse || null,
+        responses: options.responses || (options.response ? [{ body: options.response, code: options.responseCode || 200, name: options.responseName }] : []),
       });
     }
     return app;
@@ -1367,6 +1372,24 @@ function createApp() {
               mode: 'raw',
               raw: typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2),
             };
+          }
+          itemObj.response = [];
+          if (r.responses && r.responses.length > 0) {
+            r.responses.forEach((resp) => {
+              const respBody = typeof resp === 'string' ? resp : typeof resp.body !== 'undefined' ? (typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body, null, 2)) : JSON.stringify(resp, null, 2);
+              const statusCode = resp.code || resp.status || 200;
+              const statusText = statusCode === 201 ? 'Created' : statusCode === 400 ? 'Bad Request' : statusCode === 404 ? 'Not Found' : 'OK';
+              itemObj.response.push({
+                name: resp.name || `${statusCode} ${statusText}`,
+                originalRequest: itemObj.request,
+                status: statusText,
+                code: statusCode,
+                _postman_previewlanguage: 'json',
+                header: [{ key: 'Content-Type', value: 'application/json' }],
+                cookie: [],
+                body: respBody,
+              });
+            });
           }
           return itemObj;
         }),

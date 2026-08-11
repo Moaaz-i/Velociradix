@@ -1,22 +1,37 @@
 # ⚡ Velociradix
 
 [![npm version](https://img.shields.io/npm/v/velociradix.svg)](https://www.npmjs.com/package/velociradix)
+[![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://moaaz-i.github.io/Velociradix)
 [![Prebuild Status](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml/badge.svg)](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-100%25-blue.svg)](./index.d.ts)
 
 A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS/BSD, `epoll` on Linux) with multi-threaded `SO_REUSEPORT` worker threads, a C++ Radix Trie router, zero-copy HTTP parsing, native prebuilt binaries, and a rich 40-feature JavaScript/TypeScript facade.
 
+> 📖 **Official Documentation**: [https://moaaz-i.github.io/Velociradix](https://moaaz-i.github.io/Velociradix)
+
 > **🚀 Benchmark (500,000 requests, Apple M1, HTTP Pipelining):**
 > - **Pure C++ Engine**: **~450,000 req/s** (**11.2x faster than Express**)
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.0.18:** Complete Architecture & Technical Deep-Dive Guide ([ARCHITECTURE.md](./ARCHITECTURE.md)), Peak Benchmark Winner (121,235 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v6.1.3:** Complete Architecture & Technical Deep-Dive Guide ([docs/architecture.md](./docs/architecture.md)), Postman & Swagger Interactive UI Hosting, Peak Benchmark Winner (121,235 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
-## ✨ Features
+## 📚 Documentation Table of Contents
+
+- 📖 [Getting Started & Setup](./docs/guide/getting-started.md)
+- ⚙️ [20+ Built-in Middlewares](./docs/guide/middlewares.md)
+- 🧪 [Postman & Swagger UI Integration](./docs/guide/postman-swagger.md)
+- ⚡ [Application API Reference (`app`)](./docs/api/app.md)
+- 📥 [Context API Reference (`ctx`)](./docs/api/context.md)
+- 🧵 [Multi-Threading & C++ Architecture](./docs/architecture.md)
+- 🛠️ [Troubleshooting & FAQ](./docs/guide/troubleshooting.md)
+
+---
+
+## ✨ Key Features
 
 - 🏎️ **Ultra-Fast C++17 Core**: Event-driven `kqueue`/`epoll` architecture with `SO_REUSEPORT` multi-threading.
 - ⚡ **Off-Main-Thread Architecture**: 80% of socket I/O, HTTP parsing, and route matching is offloaded to native C++ background threads, keeping the Node.js JS event loop completely unblocked.
@@ -54,15 +69,15 @@ npm install velociradix
 ### JavaScript (ES Modules)
 
 ```js
-import { createApp, logger, helmet } from 'velociradix';
+import velociradix, { logger, helmet } from 'velociradix';
 
-const app = createApp();
+const app = velociradix();
 
 app.use(logger());
 app.use(helmet());
 
 app.get('/', (ctx) => {
-  return { message: 'Hello from Velociradix v6.0!' };
+  return { message: 'Hello from Velociradix v6.1!' };
 });
 
 app.get('/users/:id', (ctx) => {
@@ -77,7 +92,7 @@ app.listen(3000, () => {
 ### TypeScript
 
 ```ts
-import { createApp, Context, BadRequestError } from 'velociradix';
+import velociradix, { Context, BadRequestError } from 'velociradix';
 
 interface UserProfile {
   id: number;
@@ -85,7 +100,7 @@ interface UserProfile {
   role: string;
 }
 
-const app = createApp();
+const app = velociradix();
 
 app.get('/users/:id', async (ctx: Context) => {
   const id = Number(ctx.params.id);
@@ -104,16 +119,23 @@ app.listen(3000);
 
 ## 🛠️ API & Feature Highlights
 
-### 1. OpenAPI & Swagger UI (`app.swagger()`)
+### 1. OpenAPI & Swagger UI (`app.swaggerUI()`)
 
 Automatically introspect registered routes and host an interactive Swagger UI:
 
 ```js
-app.swagger('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
-app.get('/openapi.json', (ctx) => ctx.json(app.openapi({ title: 'My API', version: '6.0.0' })));
+app.swaggerUI('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
 ```
 
-### 2. Zero-Dependency JWT Authentication (`jwtAuth()`)
+### 2. Postman UI Playground (`app.postmanUI()`)
+
+Hosts an interactive Postman API documentation & JSON collection download page:
+
+```js
+app.postmanUI('/postman-docs'); // Hosts Postman UI at http://localhost:3000/postman-docs
+```
+
+### 3. Zero-Dependency JWT Authentication (`jwtAuth()`)
 
 ```js
 import { jwtAuth, jwtSign } from 'velociradix';
@@ -130,7 +152,7 @@ app.get('/admin', (ctx) => {
 }, { middlewares: [jwtAuth({ secret: 'super-secret-key' })] });
 ```
 
-### 3. File Streaming with ETag & Range Requests (`ctx.sendFile()`)
+### 4. File Streaming with ETag & Range Requests (`ctx.sendFile()`)
 
 Supports `ETag`, `304 Not Modified`, and `206 Partial Content` for video/audio streaming:
 
@@ -140,15 +162,15 @@ app.get('/video.mp4', (ctx) => {
 });
 ```
 
-### 4. Server-Sent Events (SSE) Streaming (`ctx.sse()`)
+### 5. Server-Sent Events (SSE) Streaming (`ctx.sse()`)
 
 ```js
 app.get('/events', (ctx) => {
   ctx.sse((stream) => {
-    stream.send_event('Connected to Velociradix SSE', 'welcome');
+    stream.send({ event: 'ping', data: 'Connected to Velociradix SSE' });
     let count = 0;
     const timer = setInterval(() => {
-      stream.send_event(`Tick ${++count}`);
+      stream.send({ data: `Tick ${++count}` });
       if (count >= 5) {
         clearInterval(timer);
         stream.close();
@@ -158,7 +180,7 @@ app.get('/events', (ctx) => {
 });
 ```
 
-### 5. Encrypted Cookies & Sessions
+### 6. Encrypted Cookies & Sessions
 
 ```js
 // Encrypted cookies (AES-256-CBC)
@@ -171,16 +193,6 @@ app.get('/get-secret', (ctx) => {
   const vault = ctx.getEncryptedCookie('user_vault', 'cookie-secret-key');
   return { vault };
 });
-```
-
-### 6. In-Memory Response Caching (`cache()`)
-
-```js
-import { cache } from 'velociradix';
-
-app.get('/trending', (ctx) => {
-  return { timestamp: Date.now() };
-}, { middlewares: [cache({ ttlMs: 10000 })] });
 ```
 
 ### 7. Ultra-Fast C++ Fast-Path Responses (`app.fastGet()`)
@@ -203,7 +215,7 @@ app.group('/api/v1', (v1) => {
 });
 ```
 
-### 8. Structured HTTP Error Classes
+### 9. Structured HTTP Error Classes
 
 ```js
 import { BadRequestError, NotFoundError, UnauthorizedError } from 'velociradix';
@@ -221,28 +233,14 @@ app.get('/protected-data', (ctx) => {
 
 ### 1. Framework Speed Challenge Benchmark (100 Connections, 10 Pipelining)
 
-| Framework / Mode | GET `/json` (RPS) | GET `/user/:id` (RPS) | Avg Latency | Rank |
-| :--- | :---: | :---: | :---: | :---: |
-| 🚀 **Velociradix (`fastGet`)** | **121,235 req/sec** ⚡ | **29,659 req/sec** | **7.76 ms** | 🥇 **#1 Winner** |
-| ⚡ **`Fastify`** | 50,301 req/sec | 50,096 req/sec | 19.57 ms | 🥈 #2 |
-| ⚡ **`node:http` (Native)** | 47,202 req/sec | 48,502 req/sec | 20.81 ms | 🥈 #2 |
-| ⚡ **Velociradix (Standard)** | 29,038 req/sec | 29,659 req/sec | 34.01 ms | #3 |
-| 🐌 **`Express`** | 10,603 req/sec | 11,503 req/sec | 95.21 ms | #4 |
+| Framework / Mode | GET `/json` (RPS) | Avg Latency | Rank |
+| :--- | :---: | :---: | :---: |
+| 🚀 **Velociradix (`fastGet`)** | **114,490 req/sec** ⚡ | **8.26 ms** | 🥇 **#1 Winner** |
+| ⚡ **Fastify** | 41,605 req/sec | 23.55 ms | 🥈 #2 |
+| ⚡ **Velociradix (Standard)** | **19,915 req/sec** ⚡ | **50.26 ms** | 🥉 **#3 (nearly 2x Express)** |
+| 🐌 **Express** | 11,503 req/sec | 88.04 ms | #4 |
 
----
-
-### 📈 Version Performance Evolution (`fastGet` Mode)
-
-| Version | GET `/json` (RPS) | Status / Notes |
-| :--- | :---: | :--- |
-| 🏆 **`v6.0.17` (Current)** | **121,235 req/sec** | 🥇 **Peak Speed & Maximum Stability (Recommended)** |
-| 🌟 `v6.0.15` | 109,178 req/sec | Stable High Performance |
-| ⚡ `v6.0.13` | 107,347 req/sec | C++ Fast-Path Debut |
-| ⚠️ `v6.0.16` | 89,747 req/sec | ⚠️ Deprecated (Getter Overhead) |
-| ⚠️ `v6.0.14` | 79,946 req/sec | ⚠️ Deprecated (Batch Queue Overhead) |
-| ⚠️ `< v6.0.13` | — | ⚠️ Deprecated (Legacy Memory Lifetimes) |
-
-> ⚠️ **Notice on Deprecated Versions:** All versions prior to `v6.0.17` (specifically `<6.0.13`, `6.0.14`, and `6.0.16`) have been deprecated on npm due to performance regressions or route param lifetime bugs. Please always upgrade to **`velociradix@latest`**.
+> 💡 **Note:** Make sure to disable console logger middlewares (`logger()`) during production benchmarks to eliminate I/O stdout bottlenecks and achieve peak throughput.
 
 ---
 
@@ -261,3 +259,4 @@ Velociradix provides cross-platform precompiled native modules:
 ## 📄 License
 
 Distributed under the **MIT License**. See [LICENSE](LICENSE) for more details.
+
