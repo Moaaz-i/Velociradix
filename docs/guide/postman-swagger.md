@@ -6,7 +6,7 @@ Velociradix comes with zero-dependency, built-in interactive UI generators for b
 
 ## 🚀 1. Built-in Postman UI Generator
 
-You can expose a self-hosted Postman Documentation & API Playground interface directly from your Velociradix application.
+You can expose a self-hosted Postman Documentation & API Playground interface directly from your Velociradix application using `app.postmanDoc()`.
 
 ### Basic Usage
 
@@ -17,34 +17,39 @@ const app = createApp();
 
 app.get('/api/users', (ctx) => {
   return ctx.json({ users: [{ id: 1, name: 'Alice' }] });
+}, {
+  name: 'Get All Users',
+  description: 'Fetches the list of all registered users.'
 });
 
 app.post('/api/users', (ctx) => {
   return ctx.status(201).json({ success: true });
+}, {
+  name: 'Create User',
+  body: { name: 'Bob', age: 25 }
 });
 
-// Expose Postman UI at /docs/postman
-app.postmanUI('/docs/postman', {
-  title: 'Velociradix API Docs',
-  version: '1.0.0'
+// Expose Postman UI at /postman-docs
+app.postmanDoc('/postman-docs', {
+  name: 'Velociradix API Docs'
 });
 
 app.listen(3000);
 ```
 
-Visit `http://localhost:3000/docs/postman` in your browser to view and interact with your Postman API Playground.
+Visit `http://localhost:3000/postman-docs` in your browser to view and interact with your Postman API Playground.
 
 ---
 
 ## 📥 2. Exporting Postman Collection JSON
 
-You can generate a valid **Postman Collection (v2.1.0)** JSON programmatically for import into the Postman Desktop App.
+You can generate a valid **Postman Collection (v2.1.0)** JSON programmatically using `app.postman()` for import into the Postman Desktop App.
 
 ```js
 // Expose the raw Postman Collection JSON endpoint
-app.get('/docs/postman.json', (ctx) => {
-  const collection = app.generatePostmanCollection({
-    title: 'My App API Collection',
+app.get('/postman.json', (ctx) => {
+  const collection = app.postman({
+    name: 'My App API Collection',
     baseUrl: 'http://localhost:3000'
   });
   return ctx.json(collection);
@@ -54,23 +59,25 @@ app.get('/docs/postman.json', (ctx) => {
 ### Importing into Postman Desktop:
 1. Open **Postman Desktop**.
 2. Click **Import** (top left).
-3. Paste `http://localhost:3000/docs/postman.json` or download the JSON file and drop it into Postman.
+3. Paste `http://localhost:3000/postman.json` or download the JSON payload and drop it into Postman.
 
 ---
 
 ## 📜 3. Swagger / OpenAPI 3.0 UI
 
-Velociradix also includes an interactive **Swagger UI** generator out of the box.
+Velociradix also includes an interactive **Swagger UI** generator out of the box via `app.swagger()` and OpenAPI spec via `app.openapi()`.
 
 ```js
-// Serve Swagger UI at /docs/swagger
-app.swaggerUI('/docs/swagger', {
-  title: 'Velociradix OpenAPI Spec',
-  version: '1.0.0'
+// Serve interactive Swagger UI at /docs
+app.swagger('/docs');
+
+// Expose raw OpenAPI 3.0 JSON spec
+app.get('/openapi.json', (ctx) => {
+  return ctx.json(app.openapi({ title: 'My API Spec', version: '1.0.0' }));
 });
 ```
 
-Visit `http://localhost:3000/docs/swagger` to inspect endpoints, schemas, and test requests live.
+Visit `http://localhost:3000/docs` to inspect endpoints and test requests live.
 
 ---
 
@@ -79,9 +86,10 @@ Visit `http://localhost:3000/docs/swagger` to inspect endpoints, schemas, and te
 In production environments, restrict access to API documentation interfaces:
 
 ```js
-// Restrict docs to development mode or authenticated admin users
+// Restrict docs to development mode
 if (process.env.NODE_ENV !== 'production') {
-  app.postmanUI('/docs/postman');
-  app.swaggerUI('/docs/swagger');
+  app.postmanDoc('/postman-docs');
+  app.swagger('/docs');
 }
 ```
+

@@ -86,20 +86,20 @@ app.group('/api/v1', (v1) => {
 
 ---
 
-### `app.postmanUI(docsPath, options?)` & `app.generatePostmanCollection(options?)`
-Hosts a built-in Postman API Playground or exports Postman Collection JSON.
+### `app.postmanDoc(docsPath?, options?)` & `app.postman(options?)`
+Hosts a built-in Postman API Playground or exports Postman Collection JSON v2.1.0.
 
 ```js
-app.postmanUI('/docs/postman', { title: 'My API Docs' });
+app.postmanDoc('/postman-docs', { name: 'My API Docs' });
 ```
 
 ---
 
-### `app.swaggerUI(docsPath, options?)` & `app.generateOpenAPISpec(options?)`
+### `app.swagger(docsPath?)` & `app.openapi(options?)`
 Hosts an interactive Swagger UI documentation page or exports OpenAPI 3.0 JSON spec.
 
 ```js
-app.swaggerUI('/docs/swagger', { title: 'My API Docs' });
+app.swagger('/docs');
 ```
 
 ---

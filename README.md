@@ -119,20 +119,20 @@ app.listen(3000);
 
 ## 🛠️ API & Feature Highlights
 
-### 1. OpenAPI & Swagger UI (`app.swaggerUI()`)
+### 1. OpenAPI & Swagger UI (`app.swagger()`)
 
 Automatically introspect registered routes and host an interactive Swagger UI:
 
 ```js
-app.swaggerUI('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
+app.swagger('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
 ```
 
-### 2. Postman UI Playground (`app.postmanUI()`)
+### 2. Postman UI Playground (`app.postmanDoc()`)
 
 Hosts an interactive Postman API documentation & JSON collection download page:
 
 ```js
-app.postmanUI('/postman-docs'); // Hosts Postman UI at http://localhost:3000/postman-docs
+app.postmanDoc('/postman-docs'); // Hosts Postman UI at http://localhost:3000/postman-docs
 ```
 
 ### 3. Zero-Dependency JWT Authentication (`jwtAuth()`)
