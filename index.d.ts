@@ -552,6 +552,16 @@ export interface App {
   /** Serves static directory with extended sendFile options */
   serveStatic(prefix: string, dir: string, opts?: SendFileOptions): App;
 
+  /** Hosts built-in self-hosted Postman API Documentation Playground */
+  postmanDoc(docsPath?: string, options?: { name?: string; description?: string }): App;
+  /** Generates Postman Collection v2.1.0 JSON payload */
+  postman(options?: { name?: string; description?: string; baseUrl?: string }): Record<string, JsonValue>;
+
+  /** Hosts interactive Swagger UI documentation playground */
+  swagger(docsPath?: string): App;
+  /** Generates OpenAPI 3.0 JSON specification object */
+  openapi(options?: { title?: string; version?: string; description?: string; baseUrl?: string }): Record<string, JsonValue>;
+
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;
   /** Sets number of C++ worker threads for multithreaded event loop */
