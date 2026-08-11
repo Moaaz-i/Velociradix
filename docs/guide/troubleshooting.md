@@ -151,16 +151,14 @@ Nginx or reverse proxy buffering `text/event-stream` responses or closing HTTP c
 
 ```js
 app.get('/events', (ctx) => {
-  ctx.sse((stream) => {
+  ctx.sse((sendEvent, close) => {
     // Send immediate initial event
-    stream.send({ event: 'connected', data: 'ok' });
+    sendEvent({ data: 'ok' }, 'connected');
 
     // Send heartbeat every 15s to keep connection alive through proxies
     const timer = setInterval(() => {
-      stream.send({ comment: 'keepalive' });
+      sendEvent({ data: 'keepalive' }, 'ping');
     }, 15000);
-
-    stream.onClose(() => clearInterval(timer));
   });
 });
 ```
