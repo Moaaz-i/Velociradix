@@ -8,16 +8,16 @@ Velociradix supports high-performance response streaming and Server-Sent Events 
 
 ```js
 app.get('/live-stream', (ctx) => {
-  ctx.sse((stream) => {
-    stream.send_event({ message: 'Connected' }, 'init');
+  ctx.sse((sendEvent, close) => {
+    sendEvent({ message: 'Connected' }, 'init');
 
     let counter = 0;
     const interval = setInterval(() => {
-      stream.send_event({ tick: ++counter }, 'update');
+      sendEvent({ tick: ++counter }, 'update');
 
       if (counter >= 10) {
         clearInterval(interval);
-        stream.close();
+        close();
       }
     }, 1000);
   });
