@@ -3,6 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'Velociradix',
   description: 'Zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework',
+  base: '/Velociradix/',
   themeConfig: {
     search: {
       provider: 'local',
