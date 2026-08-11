@@ -69,9 +69,9 @@ npm install velociradix
 ### JavaScript (ES Modules)
 
 ```js
-import velociradix, { logger, helmet } from 'velociradix';
+import { createApp, logger, helmet } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 app.use(logger());
 app.use(helmet());
