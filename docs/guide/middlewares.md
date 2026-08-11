@@ -100,9 +100,9 @@ Gzip/Deflate response body compression handler for payloads exceeding threshold 
 ## 🛠️ Usage Example
 
 ```js
-import velociradix, { logger, helmet, rateLimit, cors } from 'velociradix';
+import { createApp, logger, helmet, rateLimit, cors } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 app.use(logger());
 app.use(helmet());

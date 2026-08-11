@@ -48,9 +48,9 @@ You can specify the number of C++ worker threads directly using `app.setWorkers(
 
 ```js
 import os from 'node:os';
-import velociradix from 'velociradix';
+import { createApp } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 // Set worker threads to match available CPU cores
 app.setWorkers(os.cpus().length);

@@ -51,9 +51,9 @@ Access to fetch at 'http://localhost:3000/api' from origin 'http://localhost:517
 Always mount `cors()` at the very top of your application before defining routes:
 
 ```js
-import velociradix, { cors } from 'velociradix';
+import { createApp, cors } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 // ✅ Mount CORS globally at the top
 app.use(cors({

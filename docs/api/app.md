@@ -110,9 +110,9 @@ Sets the number of C++ native worker threads for TCP socket multiplexing and `SO
 
 ```js
 import os from 'node:os';
-import velociradix from 'velociradix';
+import { createApp } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 // Configure C++ worker threads to match CPU cores
 app.setWorkers(os.cpus().length);

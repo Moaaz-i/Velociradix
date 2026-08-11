@@ -11,9 +11,9 @@ You can expose a self-hosted Postman Documentation & API Playground interface di
 ### Basic Usage
 
 ```js
-import velociradix from 'velociradix';
+import { createApp } from 'velociradix';
 
-const app = velociradix();
+const app = createApp();
 
 app.get('/api/users', (ctx) => {
   return ctx.json({ users: [{ id: 1, name: 'Alice' }] });
