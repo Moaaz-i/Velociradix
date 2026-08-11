@@ -60,6 +60,7 @@
     "prebuilds",
     "Makefile",
     "README.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "engines": {
