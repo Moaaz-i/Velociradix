@@ -33,6 +33,10 @@ app
     ctx.state.started = Date.now();
     return next();
   })
+  .useExpress((req, res, next) => {
+    res.setHeader("X-Express-Bridge", "active");
+    next();
+  })
   .get("/hello", async (ctx) => {
     ctx.set("X-Custom-Chain", "velociradix").set("X-Framework", "v5");
     ctx.time("db_query");
@@ -141,6 +145,9 @@ app
     return { error: err.message };
   })
   .fastGet("/fast-json", { message: "superfast", status: "ok" })
+  .get("/express-test", (ctx) => {
+    return { bridge: "working", isReqGet: Boolean(ctx.req.get), time: ctx.req._startTime };
+  })
   .group("/api", (g) => {
     g.get("/users/:id", (ctx) => ({ user: ctx.params.id }));
   })
@@ -232,6 +239,16 @@ async function run() {
   console.log("GET /fast-json ->", fastRes.status, fastRes.text);
   if (!fastRes.text.includes('"message":"superfast"')) {
     throw new Error(`Fast-Path test failed! Got: ${fastRes.text}`);
+  }
+
+  // Express Bridge Compatibility Test
+  const expRes = await j("/express-test");
+  console.log("GET /express-test ->", expRes.status, expRes.text);
+  if (!expRes.text.includes('"bridge":"working"')) {
+    throw new Error(`Express bridge test failed! Got: ${expRes.text}`);
+  }
+  if (expRes.headers.get("x-express-bridge") !== "active") {
+    throw new Error(`Express bridge header failed!`);
   }
 
   console.log("Closing app...");

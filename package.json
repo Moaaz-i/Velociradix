@@ -1,6 +1,6 @@
 {
   "name": "velociradix",
-  "version": "6.2.1",
+  "version": "6.3.0",
   "description": "Zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework. Driven by native event loops (kqueue/epoll), multi-threaded SO_REUSEPORT workers, Radix Trie router, Postman/Swagger UI, SSE, CORS & 20+ built-in middlewares. ~3.5x faster than node:http.",
   "author": "moaaz yahia zakaria",
   "license": "MIT",
@@ -20,6 +20,10 @@
       "types": "./index.d.ts",
       "default": "./index.mjs"
     }
+  },
+  "bin": {
+    "velociradix": "./scripts/cli.mjs",
+    "create-velociradix-app": "./scripts/cli.mjs"
   },
   "keywords": [
     "http",
@@ -57,6 +61,7 @@
     "src/postman.html",
     "src/swagger.html",
     "scripts/install.mjs",
+    "scripts/cli.mjs",
     "prebuilds",
     "Makefile",
     "README.md",

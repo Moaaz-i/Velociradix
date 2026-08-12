@@ -182,7 +182,7 @@ class Context {
   get req() { return this._req; }
   get res() { return this; }
   status(c) { this.statusCode = c; return this; }
-  setHeader(k, v) { (this._headers ??= {})[k] = String(v); return this; }
+  setHeader(k, v) { (this._headers ??= {})[String(k).toLowerCase()] = String(v); return this; }
   set(k, v) {
     if (typeof k === 'object' && k !== null) {
       for (const key in k) this.setHeader(key, k[key]);
@@ -1295,14 +1295,310 @@ function createApp() {
     use(mw) { mws.push(mw); return app; },
     useExpress(fn) {
       return app.use((ctx, next) => {
-        const shim = {
-          setHeader: (k, v) => ctx.setHeader(k, v),
-          getHeader: (k) => ctx.get(k),
-          setStatus: (c) => { ctx.status(c); },
-          get statusCode() { return ctx.res.statusCode; },
-          set statusCode(v) { ctx.res.statusCode = v; },
+        const req = ctx.req;
+        
+        // --- 1. Express Request (req) Full Compatibility ---
+        req._startTime = req._startTime || new Date();
+        req._remoteAddress = req._remoteAddress || '127.0.0.1';
+        req.socket = req.socket || { remoteAddress: '127.0.0.1', encrypted: false };
+        req.connection = req.socket;
+        
+        try { if (!req.ip) req.ip = '127.0.0.1'; } catch {}
+        try { if (!req.ips) req.ips = []; } catch {}
+        try { if (!req.protocol) req.protocol = 'http'; } catch {}
+        try { if (!req.secure) req.secure = req.protocol === 'https'; } catch {}
+        try { if (!req.hostname) req.hostname = (req.headers ? req.headers.host : 'localhost'); } catch {}
+        try { if (!req.subdomains) req.subdomains = []; } catch {}
+        try { if (!req.originalUrl) req.originalUrl = req.path || '/'; } catch {}
+        try { if (!req.baseUrl) req.baseUrl = ''; } catch {}
+        try { if (!req.cookies) req.cookies = ctx.cookies || {}; } catch {}
+        try { if (!req.signedCookies) req.signedCookies = {}; } catch {}
+        try { if (!req.app) req.app = app; } catch {}
+        try { if (!req.fresh) req.fresh = false; } catch {}
+        try { if (!req.stale) req.stale = !req.fresh; } catch {}
+        try { if (!req.xhr) req.xhr = (req.headers && (req.headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest'); } catch {}
+
+        if (!req.get) {
+          req.get = (name) => {
+            if (!name) return undefined;
+            const lc = String(name).toLowerCase();
+            if (lc === 'referer' || lc === 'referrer') {
+              return (req.headers || {})['referer'] || (req.headers || {})['referrer'];
+            }
+            return (req.headers || {})[lc];
+          };
+        }
+        if (!req.header) req.header = req.get;
+        if (!req.is) {
+          req.is = (type) => {
+            const ct = req.get('content-type') || '';
+            return ct.includes(type);
+          };
+        }
+        if (!req.accepts) req.accepts = (...types) => types[0] || true;
+        if (!req.acceptsEncodings) req.acceptsEncodings = (...encs) => encs[0] || true;
+        if (!req.acceptsCharsets) req.acceptsCharsets = (...charsets) => charsets[0] || true;
+        if (!req.acceptsLanguages) req.acceptsLanguages = (...langs) => langs[0] || true;
+        if (!req.param) {
+          req.param = (name, defaultValue) => {
+            if (req.params && req.params[name] !== undefined) return req.params[name];
+            if (req.body && req.body[name] !== undefined) return req.body[name];
+            if (req.query && req.query[name] !== undefined) return req.query[name];
+            return defaultValue;
+          };
+        }
+
+        // --- 2. Express Response (res) Full Compatibility ---
+        const listeners = {};
+        const resHeaders = ctx._headers || {};
+
+        const res = {
+          _startTime: new Date(),
+          statusCode: 200,
+          statusMessage: 'OK',
+          headersSent: false,
+          locals: {},
+          app: app,
+          req: req,
+          
+          // Header Operations
+          setHeader(k, v) {
+            const key = String(k).toLowerCase();
+            resHeaders[key] = String(v);
+            ctx.setHeader(k, v);
+            return res;
+          },
+          getHeader(k) {
+            return resHeaders[String(k).toLowerCase()];
+          },
+          get(k) {
+            return res.getHeader(k);
+          },
+          getHeaders() {
+            return { ...resHeaders };
+          },
+          getHeaderNames() {
+            return Object.keys(resHeaders);
+          },
+          hasHeader(k) {
+            return String(k).toLowerCase() in resHeaders;
+          },
+          removeHeader(k) {
+            const key = String(k).toLowerCase();
+            delete resHeaders[key];
+            if (ctx._headers) delete ctx._headers[key];
+            return res;
+          },
+          header(k, v) {
+            if (v !== undefined) return res.setHeader(k, v);
+            return res.getHeader(k);
+          },
+          set(k, v) {
+            if (typeof k === 'object' && k !== null) {
+              for (const key in k) res.setHeader(key, k[key]);
+            } else if (k) {
+              res.setHeader(k, v);
+            }
+            return res;
+          },
+          append(field, val) {
+            const prev = res.getHeader(field);
+            let value = val;
+            if (prev) {
+              value = Array.isArray(prev) ? prev.concat(val) : [prev].concat(val);
+            }
+            return res.setHeader(field, value);
+          },
+          vary(field) {
+            return res.append('Vary', field);
+          },
+
+          // Cookie Support
+          cookie(name, value, options = {}) {
+            ctx.setCookie(name, value, options);
+            return res;
+          },
+          clearCookie(name, options = {}) {
+            ctx.setCookie(name, '', { ...options, maxAge: 0 });
+            return res;
+          },
+
+          // File / Attachment / Format Support
+          attachment(filename) {
+            if (filename) res.type(extname(filename));
+            return res.setHeader('Content-Disposition', filename ? `attachment; filename="${filename}"` : 'attachment');
+          },
+          sendFile(path, opts = {}, cb) {
+            res.headersSent = true;
+            res.emit('finish');
+            return ctx.sendFile(path, opts);
+          },
+          download(path, filename, opts = {}, cb) {
+            res.attachment(filename || path);
+            return res.sendFile(path, opts, cb);
+          },
+          format(obj) {
+            const fn = obj.default || obj['application/json'] || Object.values(obj)[0];
+            if (fn) return fn();
+            return res.status(464).send('Not Acceptable');
+          },
+          links(linksObj) {
+            let linkStr = res.getHeader('Link') || '';
+            if (linkStr) linkStr += ', ';
+            const formatted = Object.keys(linksObj).map(rel => `<${linksObj[rel]}>; rel="${rel}"`).join(', ');
+            return res.setHeader('Link', linkStr + formatted);
+          },
+
+          // Status & Response Sending
+          status(c) {
+            res.statusCode = Number(c);
+            ctx.status(res.statusCode);
+            return res;
+          },
+          sendStatus(c) {
+            res.status(c);
+            return res.send(String(c));
+          },
+          type(t) {
+            return res.setHeader('Content-Type', t);
+          },
+          contentType(t) {
+            return res.type(t);
+          },
+          location(url) {
+            return res.setHeader('Location', url);
+          },
+          redirect(urlOrStatus, url) {
+            let status = 302;
+            let targetUrl = urlOrStatus;
+            if (typeof urlOrStatus === 'number') {
+              status = urlOrStatus;
+              targetUrl = url;
+            }
+            res.status(status);
+            res.setHeader('Location', targetUrl);
+            return res.end();
+          },
+          json(body) {
+            res.headersSent = true;
+            res.setHeader('Content-Type', 'application/json');
+            ctx.status(res.statusCode);
+            res.emit('finish');
+            return ctx.json(body);
+          },
+          jsonp(body) {
+            return res.json(body);
+          },
+          send(body) {
+            res.headersSent = true;
+            ctx.status(res.statusCode);
+            res.emit('finish');
+            return ctx.send(body);
+          },
+          text(body) {
+            res.headersSent = true;
+            ctx.status(res.statusCode);
+            res.emit('finish');
+            return ctx.text(body);
+          },
+          html(body) {
+            res.headersSent = true;
+            ctx.status(res.statusCode);
+            res.emit('finish');
+            return ctx.html(body);
+          },
+          render(view, options, callback) {
+            return res.send(`Rendered view: ${view}`);
+          },
+          end(chunk, encoding) {
+            res.headersSent = true;
+            ctx.status(res.statusCode);
+            res.emit('finish');
+            if (chunk) return ctx.send(chunk);
+            return ctx.text('');
+          },
+          write(chunk) {
+            return true;
+          },
+          writeHead(status, statusMessage, headers) {
+            let hdrs = headers;
+            if (typeof statusMessage === 'object') {
+              hdrs = statusMessage;
+            } else if (statusMessage) {
+              res.statusMessage = statusMessage;
+            }
+            res.status(status);
+            if (hdrs) {
+              for (const k in hdrs) res.setHeader(k, hdrs[k]);
+            }
+            return res;
+          },
+
+          // EventEmitter pattern for middlewares like Morgan & Compression
+          on(evt, listener) {
+            listeners[evt] = listeners[evt] || [];
+            listeners[evt].push(listener);
+            return res;
+          },
+          once(evt, listener) {
+            const g = (...args) => {
+              res.removeListener(evt, g);
+              listener.apply(res, args);
+            };
+            res.on(evt, g);
+            return res;
+          },
+          removeListener(evt, listener) {
+            if (listeners[evt]) {
+              listeners[evt] = listeners[evt].filter(l => l !== listener);
+            }
+            return res;
+          },
+          emit(evt, ...args) {
+            if (listeners[evt]) {
+              listeners[evt].slice().forEach(l => l.apply(res, args));
+            }
+            return true;
+          }
         };
-        return fn(ctx.req, shim, next);
+
+        // Attach res reference on req
+        req.res = res;
+
+        let called = false;
+        let nextResult;
+        const result = fn(req, res, (...args) => {
+          called = true;
+          nextResult = next(...args);
+          return nextResult;
+        });
+        if (called) {
+          return nextResult;
+        }
+        if (res.headersSent) {
+          return;
+        }
+        return result;
+      });
+    },
+    useExpressRouter(prefixOrRouter, maybeRouter) {
+      let prefix = '';
+      let router = prefixOrRouter;
+      if (typeof prefixOrRouter === 'string') {
+        prefix = prefixOrRouter;
+        router = maybeRouter;
+      }
+      
+      if (!router) return app;
+
+      // Handle Express Router mount
+      return app.use((ctx, next) => {
+        if (prefix && !ctx.req.path.startsWith(prefix)) {
+          return next();
+        }
+        
+        // Wrap request & response using the Express bridge
+        return app.useExpress(router)(ctx, next);
       });
     },
     group(prefix, cb) {

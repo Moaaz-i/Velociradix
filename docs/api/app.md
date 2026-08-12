@@ -33,11 +33,29 @@ app.use(async (ctx, next) => {
 ---
 
 ### `app.useExpress(expressMiddleware)`
-Mounts standard Express.js middlewares (e.g., `cors`, `morgan`, `body-parser`) directly into Velociradix.
+Mounts standard Express.js middlewares (e.g., `cors`, `morgan`, `body-parser`) directly into Velociradix with 100% spec-compliant `req` & `res` EventEmitter stream wrappers.
 
 ```js
 import expressCors from 'cors';
+import morgan from 'morgan';
+
 app.useExpress(expressCors());
+app.useExpress(morgan('dev'));
+```
+
+---
+
+### `app.useExpressRouter([prefix], expressRouter)`
+Mounts an existing `Express.Router()` instance directly into Velociradix under an optional URL prefix.
+
+```js
+import { Router } from 'express';
+
+const userRouter = Router();
+userRouter.get('/profile', (req, res) => res.json({ id: 1, name: 'Alice' }));
+
+// Mount express router under /v1/users prefix
+app.useExpressRouter('/v1', userRouter);
 ```
 
 ---

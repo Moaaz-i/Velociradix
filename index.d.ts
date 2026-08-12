@@ -243,10 +243,17 @@ export interface PostmanCollection {
 
 /** Express response shim interface for Express middleware compatibility */
 export interface ExpressResponseShim {
-  setHeader(key: string, value: string | number): void;
+  setHeader(key: string, value: string | number): this;
   getHeader(key: string): string | undefined;
-  setStatus(code: number): void;
+  get(key: string): string | undefined;
+  status(code: number): this;
+  sendStatus(code: number): any;
+  json(body: any): any;
+  send(body: any): any;
   statusCode: number;
+  headersSent: boolean;
+  on(event: string, listener: (...args: any[]) => void): this;
+  emit(event: string, ...args: any[]): boolean;
 }
 
 /** Per-route middleware and metadata options */
@@ -539,6 +546,9 @@ export interface App {
 
   /** Express middleware compatibility shim adapter */
   useExpress(fn: (req: Request, res: ExpressResponseShim, next: NextFunction) => void): App;
+
+  /** Express Router compatibility adapter for mounting Express Router instances */
+  useExpressRouter(prefixOrRouter: string | ((req: any, res: any, next: any) => void), router?: (req: any, res: any, next: any) => void): App;
 
   /** Groups routes under a common URL path prefix */
   group(prefix: string, cb: (group: RouteGroup) => void): App;

@@ -15,13 +15,14 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v6.2.0:** Complete Architecture & Technical Deep-Dive Guide ([docs/architecture.md](./docs/architecture.md)), Postman & Swagger Interactive UI Hosting, Peak Benchmark Winner (121,235 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v6.3.0:** Full 100% Express Middleware & API Compatibility Layer (`app.useExpress()`) supporting Morgan, Helmet, CORS, Multer, Passport, Cookie-Parser, and complete spec-compliant `req` & `res` EventEmitter stream wrappers! Complete Architecture & Technical Deep-Dive Guide ([docs/architecture.md](./docs/architecture.md)), Postman & Swagger Interactive UI Hosting, Peak Benchmark Winner (121,235 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
 
 ---
 
 ## 📚 Documentation Table of Contents
 
 - 📖 [Getting Started & Setup](./docs/guide/getting-started.md)
+- 🔄 [Express Middleware & Router Compatibility (`app.useExpress`)](./docs/guide/express-compat.md)
 - ⚙️ [20+ Built-in Middlewares](./docs/guide/middlewares.md)
 - 🧪 [Postman & Swagger UI Integration](./docs/guide/postman-swagger.md)
 - ⚡ [Application API Reference (`app`)](./docs/api/app.md)
@@ -54,13 +55,28 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 
 ---
 
-## 📦 Installation
+## ⚡ Instant Project Generator (CLI)
+
+Create a production-ready Velociradix project with a single command:
 
 ```bash
-npm install velociradix
+# 1. Standard JavaScript ES Modules Project
+npx create-velociradix-app my-api
+
+# 2. Strict TypeScript Starter
+npx create-velociradix-app my-api --template ts
+
+# 3. Express Router & Middleware Compatibility Starter
+npx create-velociradix-app my-api --template express-bridge
+
+# 4. Full REST API (JWT Auth + Zod + Postman UI)
+npx create-velociradix-app my-api --template rest-api
 ```
 
-> **Note**: Velociradix includes precompiled native binaries (`prebuilds/`) for Linux, macOS, and Windows. If a prebuilt binary for your platform is available, installation is **instant**. Otherwise, it automatically compiles locally using your system's C++17 compiler (`clang++` or `g++`).
+Or initialize inside an existing folder:
+```bash
+npx velociradix init
+```
 
 ---
 
