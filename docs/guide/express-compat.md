@@ -87,7 +87,53 @@ The `app.useExpress(fn)` bridge transparently wraps and maps Velociradix's inter
 
 ---
 
+## 🎧 Leveraging Response & App Event Listeners
+
+You can listen to lifecycle events both on individual Express response instances (`res.on`) and globally on the Velociradix application bus (`app.on`):
+
+### 1. Response Event Listeners (`res.on('finish')`)
+
+Listen for response completion inside custom Express middlewares to log metrics or execute cleanup:
+
+```js
+app.useExpress((req, res, next) => {
+  const startTime = Date.now();
+
+  // Triggered when response is fully sent to client
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    console.log(`[Metrics] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} (${duration}ms)`);
+  });
+
+  next();
+});
+```
+
+### 2. Global Application Lifecycle Listeners (`app.on`)
+
+Velociradix provides event-driven bus handlers for global observability:
+
+```js
+// 1. Request Received Event
+app.on('request', (ctx) => {
+  console.log(`[Global Event] Request received for: ${ctx.req.path}`);
+});
+
+// 2. Response Sent Event
+app.on('response', (ctx) => {
+  console.log(`[Global Event] Response dispatched with status: ${ctx.statusCode}`);
+});
+
+// 3. Error Event
+app.on('error', (err, ctx) => {
+  console.error(`[Global Error Event] Exception on ${ctx.req.path}: ${err.message}`);
+});
+```
+
+---
+
 ## ⚡ Performance Note
 
 `app.useExpress()` introduces zero extra allocations overhead by reusing pooled context layers. It allows you to run high-performance C++ backend routing alongside your favorite Express middlewares!
+
 
