@@ -153,6 +153,7 @@ function releaseContext(ctx) {
     ctx._state = undefined;
     ctx._timers = undefined;
     ctx._session = undefined;
+    ctx._expressRes = undefined;
     if (ctx._req) ctx._req._reset(0);
     contextPool.push(ctx);
   }
@@ -533,6 +534,10 @@ function runChain(mws, handler, ctx) {
 }
 
 function respondRes(ctx, status, body) {
+  if (ctx._expressRes) {
+    ctx._expressRes.statusCode = status;
+    ctx._expressRes.emit('finish');
+  }
   native.respond(ctx._ptr, status, ctx._headers, body);
 }
 
@@ -1562,8 +1567,9 @@ function createApp() {
           }
         };
 
-        // Attach res reference on req
+        // Attach res reference on req and ctx
         req.res = res;
+        ctx._expressRes = res;
 
         let called = false;
         let nextResult;
