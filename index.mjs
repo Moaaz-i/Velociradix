@@ -1308,6 +1308,10 @@ function createApp() {
         req.socket = req.socket || { remoteAddress: '127.0.0.1', encrypted: false };
         req.connection = req.socket;
         
+        try { Object.defineProperty(req, 'url', { value: ctx.req.path, configurable: true, writable: true }); } catch {}
+        try { Object.defineProperty(req, 'originalUrl', { value: ctx.req.path, configurable: true, writable: true }); } catch {}
+        try { Object.defineProperty(req, '_startTime', { value: new Date(), configurable: true, writable: true }); } catch {}
+        
         try { if (!req.ip) req.ip = '127.0.0.1'; } catch {}
         try { if (!req.ips) req.ips = []; } catch {}
         try { if (!req.protocol) req.protocol = 'http'; } catch {}
