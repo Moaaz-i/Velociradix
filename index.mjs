@@ -2063,6 +2063,8 @@ const middlewares = {
 
 export {
   app,
+  Context,
+  Request,
   allowedMethodsMiddleware as allowedMethods,
   apiKeyMiddleware as apiKey,
   auditLogMiddleware as auditLog,
@@ -2110,9 +2112,15 @@ export {
   validateMiddleware as validate,
 };
 
-export default {
+function velociradix() {
+  return createApp();
+}
+
+Object.assign(velociradix, {
   app,
   createApp,
+  Context,
+  Request,
   jwtSign,
   jwtVerify,
   encryptValue,
@@ -2124,4 +2132,6 @@ export default {
   NotFoundError,
   InternalServerError,
   ...middlewares,
-};
+});
+
+export default velociradix;

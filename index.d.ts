@@ -688,7 +688,8 @@ export function auditLog(options?: { onAudit?: (event: Record<string, JsonValue>
 /** Favicon Fast Dismiss middleware generator */
 export function favicon(options?: { icon?: string }): Middleware;
 
-declare const velociradix: {
+export interface VelociradixFactory {
+  (): App;
   app: App;
   createApp: typeof createApp;
   jwtSign: typeof jwtSign;
@@ -715,6 +716,9 @@ declare const velociradix: {
   slowDown: typeof slowDown;
   rateLimit: typeof rateLimit;
   helmet: typeof helmet;
-};
+  [key: string]: any;
+}
+
+declare const velociradix: VelociradixFactory;
 
 export default velociradix;
