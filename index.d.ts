@@ -570,7 +570,15 @@ export interface App {
   /** Hosts interactive Swagger UI documentation playground */
   swagger(docsPath?: string): App;
   /** Generates OpenAPI 3.0 JSON specification object */
-  openapi(options?: { title?: string; version?: string; description?: string; baseUrl?: string }): Record<string, JsonValue>;
+  exportOpenAPI(options?: { title?: string; version?: string; description?: string; baseUrl?: string }): Record<string, JsonValue>;
+  /** Generates Postman Collection v2.1.0 JSON payload */
+  exportPostman(name?: string): Record<string, JsonValue>;
+
+  /** Serves interactive real-time Metrics UI dashboard at specified path */
+  metricsUI(dashPath?: string): App;
+
+  /** Registers callback function to execute on server graceful shutdown */
+  onShutdown(fn: () => void | Promise<void>): App;
 
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;

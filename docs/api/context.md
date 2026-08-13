@@ -1,168 +1,125 @@
 # Context (`ctx`) API Reference
 
-The `Context` (`ctx`) object encapsulates both the incoming HTTP Request and the outgoing HTTP Response into a single unified, ultra-fast interface.
+The `ctx` object encapsulates the incoming HTTP Request (`ctx.req`) and outgoing HTTP Response (`ctx.res`) for each request lifecycle.
+
+> [!TIP]
+> The `ctx` object is pooled in memory (V8 Monomorphic Object Pool) to guarantee zero Garbage Collection freezes during high request throughput.
 
 ---
 
-## 📥 Request Properties & Methods
+## 📥 Request Properties & Operations
 
-| Property / Method | Type / Signature | Description |
+### `ctx.req`
+Direct reference to the low-level `Request` wrapper object containing parsed request details.
+
+| Property | Type | Description |
 | :--- | :--- | :--- |
-| `ctx.req` | `Request` | Raw incoming HTTP request object. |
-| `ctx.res` | `Response` | Raw outgoing HTTP response object. |
-| `ctx.method` | `string` | Uppercased HTTP method (`'GET'`, `'POST'`, `'PUT'`, `'DELETE'`, etc.). |
-| `ctx.url` | `string` | Complete raw request URL string (including query parameters). |
-| `ctx.path` | `string` | Normalized request path (excluding query parameters). |
-| `ctx.ip` | `string` | Resolved client IP address. Supports `X-Forwarded-For` header resolution. |
-| `ctx.ips` | `string[]` | Array of proxy IP addresses extracted from `X-Forwarded-For`. |
-| `ctx.headers` | `Record<string, string>` | Key-value map of lowercased request headers. |
-| `ctx.params` | `Record<string, string>` | Object containing dynamic route path parameters (e.g., `:id`, `:category`). |
-| `ctx.state` | `Record<string, any>` | User-land state storage passed between middlewares and route handlers. |
+| `ctx.path` | `string` | URL path portion of request (e.g. `/api/users`). |
+| `ctx.method` | `string` | HTTP Method string (`'GET'`, `'POST'`, `'PUT'`, etc.). |
+| `ctx.query(key)` | `string` | Returns parsed URL query string parameter value. |
+| `ctx.params` | `Record<string, string>` | Key-value object of route path parameters (e.g. `:id`). |
+| `ctx.ip` | `string` | Resolved client IP address (supports `setTrustProxy`). |
+| `ctx.ips` | `string[]` | Array of proxy IP addresses from `X-Forwarded-For`. |
+| `ctx.requestId` | `string` | Unique request correlation ID (`X-Request-ID`). |
 
-### `ctx.get(headerName)`
-Returns the case-insensitive request header value.
-```js
-const userAgent = ctx.get('user-agent');
-const authHeader = ctx.get('Authorization');
-```
+---
 
-### `ctx.query(key?)`
-Parses and returns URL query parameters. If no key is passed, returns the full query object.
-```js
-// GET /search?q=velociradix&limit=10
-const search = ctx.query('q'); // 'velociradix'
-const allQuery = ctx.query(); // { q: 'velociradix', limit: '10' }
-```
+## 🛡️ Input Validation
 
-### `ctx.cookie(name)`
-Parses and returns a specific request cookie value by name.
-```js
-const sessionId = ctx.cookie('session_id');
-```
+### `ctx.validate(rules, targetData?)`
+Validates request body, query string, or path parameters against schema rules. Throws a structured `BadRequestError` (400) if validation fails.
 
-### `ctx.body()` / `ctx.req.body`
-`ctx.req.body` returns the raw body string. Calling `await ctx.body()` parses and returns the JSON payload as an Object (or `{}` if unparseable).
-```js
-const rawText = ctx.req.body;
-const payload = await ctx.body(); // Automatically parses JSON body
-```
+| Rule Property | Type | Description |
+| :--- | :--- | :--- |
+| `required` | `boolean` | Requires field to be present and non-empty. |
+| `type` | `'string' \| 'number' \| 'boolean' \| 'email' \| 'array' \| 'object'` | Value data type check. |
+| `min` | `number` | Minimum string/array length or numeric value. |
+| `max` | `number` | Maximum string/array length or numeric value. |
+| `pattern` | `RegExp` | Regex pattern matching rule. |
 
-### `ctx.bearerToken()`
-Extracts the Bearer token string from the `Authorization: Bearer <token>` header.
-```js
-const token = ctx.bearerToken(); // 'eyJhbGciOiJIUzI1Ni...'
-```
-
-### `ctx.basicAuth()`
-Extracts HTTP Basic Authentication credentials.
-```js
-const auth = ctx.basicAuth(); // { username: 'admin', password: 'secret123' }
+```javascript
+app.post('/api/register', (ctx) => {
+  const data = ctx.validate({
+    username: { type: 'string', required: true, min: 3 },
+    email: { type: 'email', required: true },
+    age: { type: 'number', min: 18 }
+  });
+  return ctx.json({ status: 'ok', data });
+});
 ```
 
 ---
 
-## 📤 Response Methods
-
-All response methods support method chaining.
+## 📤 Response Operations
 
 ### `ctx.status(code)`
-Sets the HTTP status code (default: `200`).
-```js
+Sets the HTTP status code for the response.
+
+```javascript
 ctx.status(201).json({ created: true });
 ```
 
-### `ctx.setHeader(key, value)`
-Sets a single HTTP response header.
-```js
-ctx.setHeader('X-Powered-By', 'Velociradix');
-```
+---
 
-### `ctx.setCookie(name, value, options)`
-Sets a response cookie with modern security options.
-```js
-ctx.setCookie('session_id', 'abc123xyz', {
-  httpOnly: true,
-  secure: true,
-  maxAge: 3600, // 1 hour in seconds
-  sameSite: 'Lax',
-  path: '/'
-});
-```
+### `ctx.json(value)`
+Sends a JSON response payload with `Content-Type: application/json`.
 
-### `ctx.setEncryptedCookie(name, value, secret, options)`
-Encrypts a cookie value using AES-256-CBC before setting the header.
-```js
-ctx.setEncryptedCookie('user_secret', { userId: 42 }, 'super-secret-key-32-chars!!', {
-  httpOnly: true,
-  maxAge: 86400
-});
-```
-
-### `ctx.getEncryptedCookie(name, secret)`
-Decrypts and parses an encrypted cookie payload.
-```js
-const data = ctx.getEncryptedCookie('user_secret', 'super-secret-key-32-chars!!');
-console.log(data.userId); // 42
-```
-
-### `ctx.json(object, status?)`
-Sends a JSON response with `Content-Type: application/json`.
-```js
-return ctx.json({ status: 'ok', data: [1, 2, 3] }, 200);
-```
-
-### `ctx.html(htmlString, status?)`
-Sends an HTML document response with `Content-Type: text/html; charset=utf-8`.
-```js
-return ctx.html('<h1>Welcome to Velociradix</h1>');
-```
-
-### `ctx.send(data, status?)`
-Sends a plain text, Buffer, or string response.
-```js
-return ctx.send('Hello World', 200);
-```
-
-### `ctx.redirect(url, code?)`
-Redirects the client to another URL (default status: `302`).
-```js
-return ctx.redirect('/dashboard', 302);
-```
-
-### `ctx.sendFile(filepath, options?)`
-Serves static files with automatic ETag generation, 304 Not Modified caching, and HTTP Range Requests (206 Partial Content) support.
-```js
-return ctx.sendFile('./public/image.png');
-```
-
-### `ctx.time(label)` / `ctx.timeEnd(label)`
-Measures execution time and injects W3C `Server-Timing` headers into the response.
-```js
-ctx.time('db-query');
-const users = await db.query('SELECT * FROM users');
-ctx.timeEnd('db-query'); // Injects Server-Timing: db-query;dur=1.45
+```javascript
+return ctx.json({ message: 'Hello Velociradix' });
 ```
 
 ---
 
-## ⚡ Server-Sent Events (SSE)
+### `ctx.send(body)`
+Sends raw text, Buffer, or object response payload to the client.
 
-### `ctx.sse(callback)`
-Initiates a Server-Sent Events HTTP stream (`Content-Type: text/event-stream`).
-
-```js
-ctx.sse((sendEvent, close) => {
-  sendEvent({ time: Date.now() }, 'ping');
-
-  const timer = setInterval(() => {
-    sendEvent({ message: 'heartbeat' });
-  }, 1000);
-
-  // Close stream after 10 seconds
-  setTimeout(() => {
-    clearInterval(timer);
-    close();
-  }, 10000);
-});
+```javascript
+return ctx.send('Plain text response');
 ```
 
+---
+
+### `ctx.sendFile(filepath, opts?)`
+Serves a static file from disk with ETag calculation, `304 Not Modified`, and `HTTP 206 Partial Content` Byte-Range Request support.
+
+```javascript
+return ctx.sendFile('./uploads/report.pdf');
+```
+
+---
+
+### `ctx.setCookie(name, value, options?)`
+Sets a `Set-Cookie` response header.
+
+```javascript
+ctx.setCookie('sid', '123456', { httpOnly: true, secure: true, maxAge: 3600 });
+```
+
+---
+
+### `ctx.setEncryptedCookie(name, value, secret, options?)`
+Encrypts data using AES-256-CBC and sets an encrypted cookie header.
+
+```javascript
+ctx.setEncryptedCookie('user_session', { id: 42 }, 'secret-key-123');
+```
+
+---
+
+## 🔑 Authentication & Crypto Helpers
+
+### `ctx.jwtSign(payload, secret, opts?)`
+Signs a payload object using HMAC-SHA256 and returns a JWT token string.
+
+```javascript
+const token = ctx.jwtSign({ userId: 42, role: 'admin' }, 'secret-key', { expiresIn: 3600 });
+```
+
+---
+
+### `ctx.jwtVerify(secret)`
+Extracts and verifies Bearer JWT token from `Authorization` header.
+
+```javascript
+const user = ctx.jwtVerify('secret-key');
+```

@@ -1,12 +1,31 @@
-# Express Middleware Compatibility (`app.useExpress`)
+# Express Drop-in Replacement & Middleware Compatibility
 
-Velociradix provides seamless **100% backward-compatibility** for the entire Express.js middleware ecosystem via `app.useExpress()`.
+Velociradix provides seamless **100% backward-compatibility** for the entire Express.js ecosystem both as a **Drop-in Replacement** (`velociradix/express`) and via `app.useExpress()`.
 
-This enables you to leverage existing, battle-tested Express middlewares (`cors`, `morgan`, `cookie-parser`, `express-session`, `passport`, `multer`, `helmet`, `compression`, etc.) inside Velociradix with zero code modifications.
+## 🏎️ 1. Drop-in Replacement (`velociradix/express`)
+
+Upgrade legacy Express codebases instantly by changing only the import line:
+
+```javascript
+// Replace: import express from 'express';
+import express from 'velociradix/express';
+
+const app = express();
+
+app.use(express.json());
+
+app.get('/api/users', (req, res) => {
+  res.json([{ id: 1, name: 'Alice' }]);
+});
+
+app.listen(3000, () => {
+  console.log('Running legacy Express code on Velociradix C++ Engine!');
+});
+```
 
 ---
 
-## 🚀 Quick Usage Example
+## 🚀 2. Granular Express Bridge (`app.useExpress`)
 
 ```js
 import { createApp } from 'velociradix';

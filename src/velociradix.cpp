@@ -1307,19 +1307,18 @@ RouteGroup& RouteGroup::del(const std::string& p, Handler h, std::vector<Middlew
     return *this;
 }
 
-void App::listen(int port, const std::string& host) {
+int App::bind_and_listen(int port, const std::string& host) {
     ignore_sigpipe();
     int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd < 0) return;
+    if (listen_fd < 0) {
+        throw std::runtime_error("velociradix: socket creation failed");
+    }
 
     int opt = 1;
 #ifdef _WIN32
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 #else
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-#endif
-#ifdef SO_REUSEPORT
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #endif
 
     struct sockaddr_in addr;
@@ -1329,14 +1328,17 @@ void App::listen(int port, const std::string& host) {
 
     if (::bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         sys_close(listen_fd);
-        throw std::runtime_error("velociradix: bind() failed");
+        throw std::runtime_error("velociradix: bind() failed - Port " + std::to_string(port) + " is already in use");
     }
     if (::listen(listen_fd, 4096) < 0) {
         sys_close(listen_fd);
         throw std::runtime_error("velociradix: listen() failed");
     }
     set_nonblocking(listen_fd);
+    return listen_fd;
+}
 
+void App::start_workers(int listen_fd) {
     running_.store(true);
 
     size_t nw = workers_n_;
@@ -1376,6 +1378,11 @@ void App::listen(int port, const std::string& host) {
         wake_fds_.clear();
     }
     running_.store(false);
+}
+
+void App::listen(int port, const std::string& host) {
+    int listen_fd = bind_and_listen(port, host);
+    start_workers(listen_fd);
 }
 
 void App::close() {

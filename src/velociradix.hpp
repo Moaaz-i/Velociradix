@@ -138,7 +138,8 @@ public:
     App& set_payload_limit(size_t bytes);                     // max request body size
     App& group(const std::string& prefix, const std::function<void(RouteGroup&)>& cb);
 
-    // Blocks the calling thread until close() is called (e.g. from another thread).
+    int bind_and_listen(int port, const std::string& host = "0.0.0.0");
+    void start_workers(int listen_fd);
     void listen(int port, const std::string& host = "0.0.0.0");
     void close();
 

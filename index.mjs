@@ -154,6 +154,7 @@ function releaseContext(ctx) {
     ctx._timers = undefined;
     ctx._session = undefined;
     ctx._expressRes = undefined;
+    ctx._expressResList = undefined;
     if (ctx._req) ctx._req._reset(0);
     contextPool.push(ctx);
   }
@@ -174,6 +175,8 @@ class Context {
     this._state = undefined;
     this._timers = undefined;
     this._session = undefined;
+    this._expressRes = undefined;
+    this._expressResList = undefined;
     this._sse = false;
     this._sanitizedQuery = false;
     this.query = Context.prototype.query;
@@ -232,7 +235,7 @@ class Context {
     if (typeof body === 'string') {
       ensureContentType(this, 'text/plain');
     }
-    native.respond(this._ptr, this.statusCode, this._headers, body);
+    respondRes(this, this.statusCode, body);
     return this;
   }
   json(v) { ensureContentType(this, 'application/json'); return this.send(JSON.stringify(v)); }
@@ -247,6 +250,53 @@ class Context {
     });
   }
   cache(seconds) { return this.setHeader('Cache-Control', `public, max-age=${seconds}`); }
+  validate(rules, targetData) {
+    const data = targetData ?? (this._bodyData || this.req.body || queryParse(this.req.query));
+    const errors = [];
+    if (typeof rules !== 'object' || rules === null) return data;
+    for (const field in rules) {
+      const rule = rules[field];
+      const val = data ? data[field] : undefined;
+      if (rule.required && (val === undefined || val === null || val === '')) {
+        errors.push({ field, message: `${field} is required` });
+        continue;
+      }
+      if (val !== undefined && val !== null) {
+        if (rule.type === 'string' && typeof val !== 'string') {
+          errors.push({ field, message: `${field} must be a string` });
+        } else if (rule.type === 'number' && typeof val !== 'number' && isNaN(Number(val))) {
+          errors.push({ field, message: `${field} must be a number` });
+        } else if (rule.type === 'boolean' && typeof val !== 'boolean') {
+          errors.push({ field, message: `${field} must be a boolean` });
+        } else if (rule.type === 'email' && (typeof val !== 'string' || !val.includes('@'))) {
+          errors.push({ field, message: `${field} must be a valid email` });
+        } else if (rule.type === 'array' && !Array.isArray(val)) {
+          errors.push({ field, message: `${field} must be an array` });
+        }
+        if (rule.min !== undefined) {
+          if (typeof val === 'string' || Array.isArray(val)) {
+            if (val.length < rule.min) errors.push({ field, message: `${field} length must be at least ${rule.min}` });
+          } else if (typeof val === 'number' && val < rule.min) {
+            errors.push({ field, message: `${field} must be at least ${rule.min}` });
+          }
+        }
+        if (rule.max !== undefined) {
+          if (typeof val === 'string' || Array.isArray(val)) {
+            if (val.length > rule.max) errors.push({ field, message: `${field} length must be at most ${rule.max}` });
+          } else if (typeof val === 'number' && val > rule.max) {
+            errors.push({ field, message: `${field} must be at most ${rule.max}` });
+          }
+        }
+        if (rule.pattern && rule.pattern instanceof RegExp && !rule.pattern.test(String(val))) {
+          errors.push({ field, message: `${field} format is invalid` });
+        }
+      }
+    }
+    if (errors.length > 0) {
+      throw new BadRequestError('Validation failed', { errors });
+    }
+    return data;
+  }
   get(name) {
     if (!name) return undefined;
     if (Object.prototype.hasOwnProperty.call(this._req, 'headers')) {
@@ -534,9 +584,47 @@ function runChain(mws, handler, ctx) {
 }
 
 function respondRes(ctx, status, body) {
-  if (ctx._expressRes) {
-    ctx._expressRes.statusCode = status;
-    ctx._expressRes.emit('finish');
+  const resList = ctx._expressResList || (ctx._expressRes ? [ctx._expressRes] : []);
+  for (let i = 0; i < resList.length; i++) {
+    const res = resList[i];
+    if (res.finished) continue;
+
+    res.statusCode = status;
+
+    if (ctx._headers) {
+      for (const k in ctx._headers) {
+        const lck = String(k).toLowerCase();
+        if (!res.hasHeader(lck)) {
+          res.setHeader(lck, ctx._headers[k]);
+        }
+      }
+    }
+
+    if (!res.hasHeader('content-length') && body !== undefined && body !== null) {
+      let len;
+      if (typeof body === 'string') {
+        len = Buffer.byteLength(body);
+      } else if (body instanceof Uint8Array || Buffer.isBuffer(body)) {
+        len = body.byteLength || body.length;
+      }
+      if (len !== undefined) {
+        res.setHeader('Content-Length', String(len));
+      }
+    }
+
+    if (typeof res.writeHead === 'function') {
+      try {
+        res.writeHead(status);
+      } catch {}
+    }
+
+    res.headersSent = true;
+    res._header = true;
+    res.finished = true;
+    res.writableEnded = true;
+
+    res.emit('finish');
+    res.emit('close');
   }
   native.respond(ctx._ptr, status, ctx._headers, body);
 }
@@ -1304,10 +1392,15 @@ function createApp() {
         
         // --- 1. Express Request (req) Full Compatibility ---
         req._startTime = req._startTime || new Date();
+        req._startAt = req._startAt || process.hrtime();
         req._remoteAddress = req._remoteAddress || '127.0.0.1';
         req.socket = req.socket || { remoteAddress: '127.0.0.1', encrypted: false };
         req.connection = req.socket;
-        
+        req.httpVersion = req.httpVersion || '1.1';
+        req.httpVersionMajor = req.httpVersionMajor || 1;
+        req.httpVersionMinor = req.httpVersionMinor || 1;
+        if (!req.method) req.method = ctx.req.method || 'GET';
+
         try { Object.defineProperty(req, 'url', { value: ctx.req.path, configurable: true, writable: true }); } catch {}
         try { Object.defineProperty(req, 'originalUrl', { value: ctx.req.path, configurable: true, writable: true }); } catch {}
         try { Object.defineProperty(req, '_startTime', { value: new Date(), configurable: true, writable: true }); } catch {}
@@ -1363,9 +1456,13 @@ function createApp() {
 
         const res = {
           _startTime: new Date(),
+          _startAt: process.hrtime(),
           statusCode: 200,
           statusMessage: 'OK',
           headersSent: false,
+          finished: false,
+          writableEnded: false,
+          _header: false,
           locals: {},
           app: app,
           req: req,
@@ -1439,7 +1536,11 @@ function createApp() {
           },
           sendFile(path, opts = {}, cb) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             res.emit('finish');
+            res.emit('close');
             return ctx.sendFile(path, opts);
           },
           download(path, filename, opts = {}, cb) {
@@ -1490,9 +1591,13 @@ function createApp() {
           },
           json(body) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             res.setHeader('Content-Type', 'application/json');
             ctx.status(res.statusCode);
             res.emit('finish');
+            res.emit('close');
             return ctx.json(body);
           },
           jsonp(body) {
@@ -1500,20 +1605,32 @@ function createApp() {
           },
           send(body) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             ctx.status(res.statusCode);
             res.emit('finish');
+            res.emit('close');
             return ctx.send(body);
           },
           text(body) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             ctx.status(res.statusCode);
             res.emit('finish');
+            res.emit('close');
             return ctx.text(body);
           },
           html(body) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             ctx.status(res.statusCode);
             res.emit('finish');
+            res.emit('close');
             return ctx.html(body);
           },
           render(view, options, callback) {
@@ -1521,8 +1638,12 @@ function createApp() {
           },
           end(chunk, encoding) {
             res.headersSent = true;
+            res._header = true;
+            res.finished = true;
+            res.writableEnded = true;
             ctx.status(res.statusCode);
             res.emit('finish');
+            res.emit('close');
             if (chunk) return ctx.send(chunk);
             return ctx.text('');
           },
@@ -1573,6 +1694,10 @@ function createApp() {
 
         // Attach res reference on req and ctx
         req.res = res;
+        ctx._expressResList = ctx._expressResList || [];
+        if (!ctx._expressResList.includes(res)) {
+          ctx._expressResList.push(res);
+        }
         ctx._expressRes = res;
 
         let called = false;
@@ -1723,10 +1848,42 @@ function createApp() {
         paths,
       };
     },
+    exportOpenAPI(specOpts = {}) {
+      return app.openapi(specOpts);
+    },
+    exportPostman(name = 'Velociradix Collection') {
+      const items = routeMeta.map(r => ({
+        name: r.name || `${r.method.toUpperCase()} ${r.path}`,
+        request: {
+          method: r.method.toUpperCase(),
+          header: (r.headers || []).map(h => typeof h === 'string' ? { key: h, value: '' } : h),
+          url: { raw: `{{baseUrl}}${r.path}`, host: ['{{baseUrl}}'], path: r.path.split('/').filter(Boolean) }
+        }
+      }));
+      return {
+        info: { name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+        item: items
+      };
+    },
     swagger(docsPath = '/docs') {
       app.get(docsPath, (ctx) => {
         const spec = app.openapi();
         return ctx.html(getSwaggerHtml(spec));
+      });
+      return app;
+    },
+    metricsUI(dashPath = '/velociradix/metrics') {
+      app.get(dashPath, (ctx) => {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Velociradix Live Metrics</title><style>:root{--bg:#090d16;--card:#121827;--text:#f3f4f6;--muted:#9ca3af;}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:2rem;}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;border-bottom:1px solid #1f2937;padding-bottom:1rem;}.title{font-size:1.5rem;font-weight:700;color:#60a5fa;display:flex;align-items:center;gap:0.5rem;}.badge{background:#1e3a8a;color:#93c5fd;font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-bottom:2rem;}.card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);}.card-title{font-size:0.875rem;color:var(--muted);margin-bottom:0.5rem;}.card-val{font-size:2rem;font-weight:700;color:#38bdf8;}.table-card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;}table{width:100%;border-collapse:collapse;margin-top:1rem;}th,td{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #1f2937;font-size:0.875rem;}th{color:var(--muted);}</style></head><body><div class="header"><div class="title">⚡ Velociradix Metrics & Health Engine <span class="badge">v7.0.0</span></div><div style="color:#4ade80;font-weight:600;">● Live Engine Active</div></div><div class="grid"><div class="card"><div class="card-title">System Uptime</div><div class="card-val" id="uptime">0s</div></div><div class="card"><div class="card-title">Memory Heap Used</div><div class="card-val" id="heap">0 MB</div></div><div class="card"><div class="card-title">Total Registered Routes</div><div class="card-val" id="routesCount">0</div></div><div class="card"><div class="card-title">Event Loop Engine</div><div class="card-val" style="color:#a78bfa;">Native C++</div></div></div><div class="table-card"><h3 style="margin-top:0;">Registered Routes Overview</h3><table id="routesTable"><thead><tr><th>Method</th><th>Path</th></tr></thead><tbody></tbody></table></div><script>async function update(){try{const res=await fetch(location.pathname+'/json');const data=await res.json();document.getElementById('uptime').innerText=Math.floor(data.uptime)+'s';document.getElementById('heap').innerText=(data.memory.heapUsed/1024/1024).toFixed(2)+' MB';document.getElementById('routesCount').innerText=data.routes.length;document.querySelector('#routesTable tbody').innerHTML=data.routes.map(r=>\`<tr><td style="color:#60a5fa;font-weight:bold;">\${r.method}</td><td>\${r.path}</td></tr>\`).join('');}catch{}}update();setInterval(update,2000);</script></body></html>`;
+        return ctx.html(html);
+      });
+      app.get(`${dashPath}/json`, (ctx) => {
+        return ctx.json({
+          status: 'ok',
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          routes: routeMeta.map(r => ({ method: r.method.toUpperCase(), path: r.path }))
+        });
       });
       return app;
     },
@@ -1737,8 +1894,20 @@ function createApp() {
       });
       return app;
     },
+    onShutdown(fn) {
+      if (typeof fn === 'function') {
+        app._shutdownCallbacks = app._shutdownCallbacks || [];
+        app._shutdownCallbacks.push(fn);
+      }
+      return app;
+    },
     gracefulShutdown(opts = {}) {
-      const shutdown = () => {
+      const shutdown = async () => {
+        if (app._shutdownCallbacks) {
+          for (const fn of app._shutdownCallbacks) {
+            try { await fn(); } catch {}
+          }
+        }
         app.close();
         if (opts.onShutdown) opts.onShutdown();
         process.exit(0);

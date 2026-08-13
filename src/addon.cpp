@@ -671,13 +671,22 @@ static napi_value js_listen(napi_env env, napi_callback_info info) {
         if (t == napi_string) host = js_to_string(env, argv[2]);
     }
     if (a->listening.exchange(true)) {
-        napi_value undef;
-        napi_get_undefined(env, &undef);
-        return undef;
+        napi_throw_error(env, nullptr, ("velociradix: App server is already listening on port " + std::to_string(port)).c_str());
+        return nullptr;
     }
-    a->listener = std::thread([a, port, host]() {
+
+    int listen_fd = -1;
+    try {
+        listen_fd = a->app->bind_and_listen(port, host);
+    } catch (const std::exception& e) {
+        a->listening.store(false);
+        napi_throw_error(env, nullptr, e.what());
+        return nullptr;
+    }
+
+    a->listener = std::thread([a, listen_fd]() {
         try {
-            a->app->listen(port, host);
+            a->app->start_workers(listen_fd);
         } catch (const std::exception&) {
         }
     });
