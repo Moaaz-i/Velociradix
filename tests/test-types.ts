@@ -57,7 +57,13 @@ import velociradix, {
   JsonValue,
 } from '../index.mjs';
 
-import express, { ExpressApp, ExpressRequest, ExpressResponse } from '../express.mjs';
+import express, { ExpressApp, ExpressRequest, ExpressResponse, Router, json, urlencoded } from '../express.mjs';
+
+const namedRouter = Router();
+namedRouter.get('/users', (req: ExpressRequest, res: ExpressResponse) => {
+  res.json({ ok: true });
+});
+
 
 const customApp: App = createApp();
 customApp.get('/test', (ctx: Context) => {

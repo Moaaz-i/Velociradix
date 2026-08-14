@@ -71,24 +71,60 @@ export type ExpressRequestHandler = (req: ExpressRequest, res: ExpressResponse, 
 
 /** Express Application Instance Interface */
 export interface ExpressApp {
-  use(...middlewares: Array<string | ExpressRequestHandler | ExpressApp>): ExpressApp;
-  get(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  post(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  put(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  delete(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  patch(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  head(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  options(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
-  all(path: string, ...handlers: ExpressRequestHandler[]): ExpressApp;
+  use(...middlewares: Array<string | ExpressRequestHandler | ExpressRouter | ExpressApp | ExpressRequestHandler[]>): ExpressApp;
+  get(setting: string): unknown;
+  get(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  post(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  put(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  delete(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  patch(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  head(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  options(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  all(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  route(path: string): ExpressRoute;
+  set(setting: string, val: unknown): ExpressApp;
+  enable(setting: string): ExpressApp;
+  disable(setting: string): ExpressApp;
+  enabled(setting: string): boolean;
+  disabled(setting: string): boolean;
+  engine(ext: string, fn: unknown): ExpressApp;
+  param(name: string, fn: unknown): ExpressApp;
+  path(): string;
   listen(port: number, host?: string | (() => void), callback?: () => void): unknown;
   [key: string]: unknown;
+}
+
+/** Express Router Instance Interface */
+export interface ExpressRouter extends ExpressRequestHandler {
+  use(...middlewares: Array<string | ExpressRequestHandler | ExpressRouter | ExpressRequestHandler[]>): ExpressRouter;
+  get(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  post(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  put(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  delete(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  patch(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  head(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  options(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  all(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  route(path: string): ExpressRoute;
+  param(name: string, fn: unknown): ExpressRouter;
+  [key: string]: unknown;
+}
+
+/** Express Route Instance */
+export interface ExpressRoute {
+  get(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  post(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  put(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  delete(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  patch(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  all(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
 }
 
 /** Express compatibility factory */
 export declare function express(): ExpressApp;
 
 export declare namespace express {
-  function Router(options?: Record<string, unknown>): ExpressApp;
+  function Router(options?: Record<string, unknown>): ExpressRouter;
   function json(options?: Record<string, unknown>): ExpressRequestHandler;
   function urlencoded(options?: Record<string, unknown>): ExpressRequestHandler;
   function text(options?: Record<string, unknown>): ExpressRequestHandler;
@@ -96,4 +132,13 @@ export declare namespace express {
   function static(dirPath: string, options?: Record<string, unknown>): ExpressRequestHandler;
 }
 
+export declare const Router: typeof express.Router;
+export declare const json: typeof express.json;
+export declare const urlencoded: typeof express.urlencoded;
+export declare const text: typeof express.text;
+export declare const raw: typeof express.raw;
+export declare const serveStatic: typeof express.static;
+export { serveStatic as static };
+
 export default express;
+
