@@ -1,6 +1,6 @@
 {
   "name": "velociradix",
-  "version": "7.0.1",
+  "version": "7.0.2",
   "description": "Zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework. Driven by native event loops (kqueue/epoll), multi-threaded SO_REUSEPORT workers, Radix Trie router, Postman/Swagger UI, SSE, CORS & 20+ built-in middlewares. ~3.5x faster than node:http.",
   "author": "moaaz yahia zakaria",
   "license": "MIT",
