@@ -2149,7 +2149,8 @@ function createApp() {
         const m = method.toLowerCase();
         app[m](path, async (ctx) => {
           if (mock.delayMs) await new Promise(r => setTimeout(r, mock.delayMs));
-          return ctx.status(mock.status || 200).json(mock.body || mock);
+          const body = typeof mock.body === 'function' ? mock.body(ctx) : (mock.body !== undefined ? mock.body : mock);
+          return ctx.status(mock.status || 200).json(body);
         });
       }
       return app;
