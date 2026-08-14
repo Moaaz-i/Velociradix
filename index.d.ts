@@ -241,18 +241,110 @@ export interface PostmanCollection {
   }>;
 }
 
+export interface IpFilterOptions {
+  allow?: string[];
+  deny?: string[];
+  statusCode?: number;
+}
+
+export interface ResponseTimeOptions {
+  headerName?: string;
+  digits?: number;
+}
+
+export interface SizeLimitOptions {
+  maxSize?: number;
+}
+
+export interface MaintenanceOptions {
+  enabled?: boolean | ((ctx: Context) => boolean);
+  message?: string;
+  retryAfter?: number;
+}
+
+export interface BasicAuthOptions {
+  users?: Record<string, string>;
+  realm?: string;
+}
+
+export interface CspOptions {
+  policy?: string;
+}
+
+export interface TimeoutOptions {
+  timeoutMs?: number;
+}
+
+export interface MethodOverrideOptions {
+  headerName?: string;
+}
+
+export interface ApiKeyOptions {
+  keys?: string[];
+  headerName?: string;
+  queryName?: string;
+}
+
+export interface AllowedMethodsOptions {
+  methods?: string[];
+}
+
+export interface HeaderInjectorOptions {
+  headers?: Record<string, string>;
+}
+
+export interface RedirectorOptions {
+  rules?: Record<string, string | { url: string; code?: number }>;
+}
+
+export interface ConcurrencyLimitOptions {
+  maxConcurrent?: number;
+}
+
+export interface EtagOptions {
+  weak?: boolean;
+}
+
+export interface UserAgentBlockerOptions {
+  bots?: RegExp[];
+}
+
+export interface BodyCleanerOptions {
+  trim?: boolean;
+}
+
+export interface HostGuardOptions {
+  hosts?: string[];
+}
+
+export interface AuditLogOptions {
+  onAudit?: (event: Record<string, JsonValue>) => void;
+}
+
+export interface FaviconOptions {
+  icon?: string;
+}
+
 /** Express response shim interface for Express middleware compatibility */
 export interface ExpressResponseShim {
-  setHeader(key: string, value: string | number): this;
-  getHeader(key: string): string | undefined;
-  get(key: string): string | undefined;
+  setHeader(key: string, value: string | number | string[]): this;
+  getHeader(key: string): string | number | string[] | undefined;
+  get(key: string): string | number | string[] | undefined;
+  removeHeader(key: string): this;
+  hasHeader(key: string): boolean;
+  writeHead(statusCode: number, headers?: Record<string, string | number | string[]>): this;
   status(code: number): this;
-  sendStatus(code: number): any;
-  json(body: any): any;
-  send(body: any): any;
+  sendStatus(code: number): this;
+  json(body: any): this;
+  send(body: any): this;
+  end(chunk?: any, encoding?: string, cb?: () => void): this;
   statusCode: number;
   headersSent: boolean;
+  finished: boolean;
+  _header: string | null;
+  writableEnded: boolean;
   on(event: string, listener: (...args: any[]) => void): this;
+  once(event: string, listener: (...args: any[]) => void): this;
   emit(event: string, ...args: any[]): boolean;
 }
 
@@ -286,6 +378,8 @@ export interface Request {
   readonly method: string;
   /** Full URL path string */
   readonly url: string;
+  /** Original URL path string for proxy/Express compatibility */
+  readonly originalUrl: string;
   /** Path portion of URL */
   readonly path: string;
   /** Query string portion of URL */
@@ -294,14 +388,46 @@ export interface Request {
   readonly body: string;
   /** Key-value object of lowercased HTTP request headers */
   readonly headers: Record<string, string>;
+  /** Array of raw unparsed header key-value strings */
+  readonly rawHeaders: string[];
   /** Key-value object of route path parameters (e.g. `:id`) */
   readonly params: Record<string, string>;
+  /** Client IP address */
+  readonly ip: string;
+  /** Proxy IP address chain from X-Forwarded-For */
+  readonly ips: string[];
+  /** Request ID for correlation tracking */
+  readonly requestId: string;
+  /** True if request is HTTPS */
+  readonly secure: boolean;
+  /** True if request is AJAX / X-Requested-With: XMLHttpRequest */
+  readonly xhr: boolean;
+  /** HTTP Protocol version string (e.g. '1.1') */
+  readonly httpVersion: string;
+  /** Request start high-resolution timestamp */
+  readonly _startTime?: [number, number] | number;
+  /** Low-level socket reference placeholder */
+  readonly socket?: any;
+  /** Low-level connection reference placeholder */
+  readonly connection?: any;
+  /** Get header value by case-insensitive name */
+  get(name: string): string | undefined;
+  /** Get header value by case-insensitive name (alias) */
+  header(name: string): string | undefined;
 }
 
 /** Outgoing HTTP Response helper interface */
 export interface Response {
   /** HTTP Status Code (default: 200) */
   statusCode: number;
+  /** True if response headers have been sent */
+  headersSent: boolean;
+  /** True if response output stream has finished */
+  finished: boolean;
+  /** Formatted raw response header string */
+  _header: string | null;
+  /** True if writable stream has ended */
+  writableEnded: boolean;
   /** True if response has already been sent to client */
   done: boolean;
 
@@ -309,11 +435,19 @@ export interface Response {
   status(code: number): this;
 
   /** Sets a single response header */
-  setHeader(key: string, value: string | number): this;
+  setHeader(key: string, value: string | number | string[]): this;
+  /** Gets a single response header */
+  getHeader(key: string): string | number | string[] | undefined;
+  /** Removes a response header */
+  removeHeader(key: string): this;
+  /** Checks if response header is present */
+  hasHeader(key: string): boolean;
+  /** Writes response status line and headers */
+  writeHead(statusCode: number, headers?: Record<string, string | number | string[]>): this;
 
   /** Sets response headers using chaining or a key-value object */
-  set(key: string, value: string | number): this;
-  set(headers: Record<string, string | number>): this;
+  set(key: string, value: string | number | string[]): this;
+  set(headers: Record<string, string | number | string[]>): this;
 
   /** Sets a Set-Cookie header */
   setCookie(name: string, value: string, opts?: SetCookieOptions): this;
@@ -365,6 +499,13 @@ export interface Response {
 
   /** Stops a Server-Timing metric timer and appends duration to Server-Timing header */
   timeEnd(label: string): this;
+
+  /** Subscribes to response lifecycle events ('finish', 'close') */
+  on(event: string, listener: (...args: any[]) => void): this;
+  /** Subscribes to a single response event */
+  once(event: string, listener: (...args: any[]) => void): this;
+  /** Emits a response event */
+  emit(event: string, ...args: any[]): boolean;
 }
 
 /** Context object passed to every route handler and middleware */
@@ -435,7 +576,7 @@ export interface Context extends Response {
   csrfToken(): string;
 
   /** Validates request parameters, query string, or body using validation callbacks or Zod schemas */
-  validate(schema: SchemaValidationObject | ZodLikeSchema): boolean;
+  validate<T = Record<string, any>>(schema: SchemaValidationObject | ZodLikeSchema): T;
 
   /** Checks Content-Type acceptability against requested types */
   accepts(...types: string[]): string | boolean;
@@ -474,6 +615,7 @@ export interface RouteGroup {
   post(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   put(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   delete(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
+  del(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   patch(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   head(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   options(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
@@ -497,6 +639,8 @@ export interface App {
   put(path: string, handler: Handler, options?: RouteOptions): App;
   /** Register DELETE route */
   delete(path: string, handler: Handler, options?: RouteOptions): App;
+  /** Register DELETE route (alias) */
+  del(path: string, handler: Handler, options?: RouteOptions): App;
   /** Register PATCH route */
   patch(path: string, handler: Handler, options?: RouteOptions): App;
   /** Register HEAD route */
@@ -580,6 +724,9 @@ export interface App {
   /** Registers callback function to execute on server graceful shutdown */
   onShutdown(fn: () => void | Promise<void>): App;
 
+  /** Scales application workers across CPU cluster cores */
+  cluster(options?: { workers?: number }): App;
+
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;
   /** Sets number of C++ worker threads for multithreaded event loop */
@@ -648,45 +795,45 @@ export function rateLimit(options?: RateLimitOptions): Middleware;
 /** Helmet Security Headers middleware generator */
 export function helmet(options?: HelmetOptions): Middleware;
 /** IP Whitelist / Blacklist Filter middleware generator */
-export function ipFilter(options?: { allow?: string[]; deny?: string[]; statusCode?: number }): Middleware;
+export function ipFilter(options?: IpFilterOptions): Middleware;
 /** Response Time Header middleware generator */
-export function responseTime(options?: { headerName?: string; digits?: number }): Middleware;
+export function responseTime(options?: ResponseTimeOptions): Middleware;
 /** Request Body Payload Size Limit middleware generator */
-export function sizeLimit(options?: { maxSize?: number }): Middleware;
+export function sizeLimit(options?: SizeLimitOptions): Middleware;
 /** Maintenance Mode toggle middleware generator */
-export function maintenance(options?: { enabled?: boolean | ((ctx: Context) => boolean); message?: string; retryAfter?: number }): Middleware;
+export function maintenance(options?: MaintenanceOptions): Middleware;
 /** Basic Auth Authentication middleware generator */
-export function basicAuth(options?: { users?: Record<string, string>; realm?: string }): Middleware;
+export function basicAuth(options?: BasicAuthOptions): Middleware;
 /** Content Security Policy header middleware generator */
-export function csp(options?: { policy?: string }): Middleware;
+export function csp(options?: CspOptions): Middleware;
 /** Request Timeout middleware generator */
-export function timeout(options?: { timeoutMs?: number }): Middleware;
+export function timeout(options?: TimeoutOptions): Middleware;
 /** HTTP Method Override header middleware generator */
-export function methodOverride(options?: { headerName?: string }): Middleware;
+export function methodOverride(options?: MethodOverrideOptions): Middleware;
 /** API Key Authentication middleware generator */
-export function apiKey(options?: { keys?: string[]; headerName?: string; queryName?: string }): Middleware;
+export function apiKey(options?: ApiKeyOptions): Middleware;
 /** HTTP Allowed Methods guard middleware generator */
-export function allowedMethods(options?: { methods?: string[] }): Middleware;
+export function allowedMethods(options?: AllowedMethodsOptions): Middleware;
 /** Custom Response Header Injector middleware generator */
 export function headerInjector(headers?: Record<string, string>): Middleware;
 /** Route URL Redirector middleware generator */
 export function redirector(rules?: Record<string, string | { url: string; code?: number }>): Middleware;
 /** Concurrency Throttler middleware generator */
-export function concurrencyLimit(options?: { maxConcurrent?: number }): Middleware;
+export function concurrencyLimit(options?: ConcurrencyLimitOptions): Middleware;
 /** ETag Generator middleware generator */
-export function etag(options?: { weak?: boolean }): Middleware;
+export function etag(options?: EtagOptions): Middleware;
 /** Bot & User Agent Blocker middleware generator */
-export function userAgentBlocker(options?: { bots?: RegExp[] }): Middleware;
+export function userAgentBlocker(options?: UserAgentBlockerOptions): Middleware;
 /** Request Body String Trimmer middleware generator */
-export function bodyCleaner(options?: { trim?: boolean }): Middleware;
+export function bodyCleaner(options?: BodyCleanerOptions): Middleware;
 /** Conditional Request (If-Modified-Since) middleware generator */
 export function conditionalRequest(): Middleware;
 /** Host Header Guard middleware generator */
-export function hostGuard(options?: { hosts?: string[] }): Middleware;
+export function hostGuard(options?: HostGuardOptions): Middleware;
 /** Audit Trail Logger middleware generator */
-export function auditLog(options?: { onAudit?: (event: Record<string, JsonValue>) => void }): Middleware;
+export function auditLog(options?: AuditLogOptions): Middleware;
 /** Favicon Fast Dismiss middleware generator */
-export function favicon(options?: { icon?: string }): Middleware;
+export function favicon(options?: FaviconOptions): Middleware;
 
 export interface VelociradixFactory {
   (): App;
