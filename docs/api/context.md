@@ -24,25 +24,38 @@ Direct reference to the low-level `Request` wrapper object containing parsed req
 
 ---
 
-## 🛡️ Input Validation
+## 📡 Real-Time & Streaming Helpers
+
+### `ctx.sseInterval(fn, intervalMs?)`
+Streams periodic real-time Server-Sent Event (SSE) payloads at configured time intervals:
+
+```javascript
+app.get('/live-updates', (ctx) => {
+  return ctx.sseInterval(() => ({ timestamp: Date.now() }), 1000);
+});
+```
+
+---
+
+### `ctx.sseEvent(event, data)`
+Sends a named Server-Sent Event (SSE) payload to the client:
+
+```javascript
+ctx.sseEvent('user-joined', { userId: 42 });
+```
+
+---
+
+## 🛡️ Input Validation & GraphQL
 
 ### `ctx.validate(rules, targetData?)`
 Validates request body, query string, or path parameters against schema rules. Throws a structured `BadRequestError` (400) if validation fails.
-
-| Rule Property | Type | Description |
-| :--- | :--- | :--- |
-| `required` | `boolean` | Requires field to be present and non-empty. |
-| `type` | `'string' \| 'number' \| 'boolean' \| 'email' \| 'array' \| 'object'` | Value data type check. |
-| `min` | `number` | Minimum string/array length or numeric value. |
-| `max` | `number` | Maximum string/array length or numeric value. |
-| `pattern` | `RegExp` | Regex pattern matching rule. |
 
 ```javascript
 app.post('/api/register', (ctx) => {
   const data = ctx.validate({
     username: { type: 'string', required: true, min: 3 },
-    email: { type: 'email', required: true },
-    age: { type: 'number', min: 18 }
+    email: { type: 'email', required: true }
   });
   return ctx.json({ status: 'ok', data });
 });
@@ -50,7 +63,27 @@ app.post('/api/register', (ctx) => {
 
 ---
 
-## 📤 Response Operations
+### `ctx.graphql(schema, resolvers?)`
+Evaluates a GraphQL query or mutation payload directly on the request context:
+
+```javascript
+app.post('/api/graphql', (ctx) => {
+  return ctx.graphql(`type Query { ping: String }`, { ping: () => 'pong' });
+});
+```
+
+---
+
+## 📤 Response Operations & Caching
+
+### `ctx.cacheControl(options)`
+Fluent helper for setting `Cache-Control` response headers:
+
+```javascript
+ctx.cacheControl({ maxAge: 3600, public: true, staleWhileRevalidate: 86400 });
+```
+
+---
 
 ### `ctx.status(code)`
 Sets the HTTP status code for the response.
@@ -93,33 +126,4 @@ Sets a `Set-Cookie` response header.
 
 ```javascript
 ctx.setCookie('sid', '123456', { httpOnly: true, secure: true, maxAge: 3600 });
-```
-
----
-
-### `ctx.setEncryptedCookie(name, value, secret, options?)`
-Encrypts data using AES-256-CBC and sets an encrypted cookie header.
-
-```javascript
-ctx.setEncryptedCookie('user_session', { id: 42 }, 'secret-key-123');
-```
-
----
-
-## 🔑 Authentication & Crypto Helpers
-
-### `ctx.jwtSign(payload, secret, opts?)`
-Signs a payload object using HMAC-SHA256 and returns a JWT token string.
-
-```javascript
-const token = ctx.jwtSign({ userId: 42, role: 'admin' }, 'secret-key', { expiresIn: 3600 });
-```
-
----
-
-### `ctx.jwtVerify(secret)`
-Extracts and verifies Bearer JWT token from `Authorization` header.
-
-```javascript
-const user = ctx.jwtVerify('secret-key');
 ```

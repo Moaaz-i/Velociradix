@@ -93,7 +93,7 @@ export interface ValidationRule {
   min?: number;
   max?: number;
   pattern?: RegExp;
-  custom?: (value: any) => boolean | string;
+  custom?: (value: unknown) => boolean | string;
 }
 
 /** Schema Validation Rules Map */
@@ -107,7 +107,7 @@ export interface ValidationErrorDetail {
 }
 
 /** Validation Result Container */
-export interface ValidationResult<T = Record<string, any>> {
+export interface ValidationResult<T = Record<string, unknown>> {
   valid: boolean;
   errors?: ValidationErrorDetail[];
   data?: T;
@@ -124,7 +124,7 @@ export interface JsonResponsePayload<T = JsonValue> {
 }
 
 /** Paginated API Data Response Wrapper */
-export interface PaginatedResponse<T = any> {
+export interface PaginatedResponse<T = unknown> {
   items: T[];
   page: number;
   limit: number;
@@ -135,10 +135,10 @@ export interface PaginatedResponse<T = any> {
 }
 
 /** Extendable User State Interface */
-export interface ContextState extends Record<string, any> {}
+export interface ContextState extends Record<string, JsonValue> {}
 
 /** Extendable User Session Interface */
-export interface ContextSession extends Record<string, any> {}
+export interface ContextSession extends Record<string, JsonValue> {}
 
 /** Cookie configuration options for `ctx.setCookie()` */
 export interface SetCookieOptions {
@@ -446,17 +446,17 @@ export interface ExpressResponseShim {
   writeHead(statusCode: number, headers?: Record<string, string | number | string[]>): this;
   status(code: number): this;
   sendStatus(code: number): this;
-  json(body: any): this;
-  send(body: any): this;
-  end(chunk?: any, encoding?: string, cb?: () => void): this;
+  json(body: JsonValue | unknown): this;
+  send(body: string | Buffer | Uint8Array | JsonValue | unknown): this;
+  end(chunk?: string | Buffer | Uint8Array | unknown, encoding?: string, cb?: () => void): this;
   statusCode: number;
   headersSent: boolean;
   finished: boolean;
   _header: string | null;
   writableEnded: boolean;
-  on(event: string, listener: (...args: any[]) => void): this;
-  once(event: string, listener: (...args: any[]) => void): this;
-  emit(event: string, ...args: any[]): boolean;
+  on(event: string, listener: (...args: unknown[]) => void): this;
+  once(event: string, listener: (...args: unknown[]) => void): this;
+  emit(event: string, ...args: unknown[]): boolean;
 }
 
 /** Per-route middleware and metadata options */
@@ -518,9 +518,9 @@ export interface Request {
   /** Request start high-resolution timestamp */
   readonly _startTime?: [number, number] | number;
   /** Low-level socket reference placeholder */
-  readonly socket?: any;
+  readonly socket?: unknown;
   /** Low-level connection reference placeholder */
-  readonly connection?: any;
+  readonly connection?: unknown;
   /** Get header value by case-insensitive name */
   get(name: string): string | undefined;
   /** Get header value by case-insensitive name (alias) */
@@ -612,11 +612,11 @@ export interface Response {
   timeEnd(label: string): this;
 
   /** Subscribes to response lifecycle events ('finish', 'close') */
-  on(event: string, listener: (...args: any[]) => void): this;
+  on(event: string, listener: (...args: unknown[]) => void): this;
   /** Subscribes to a single response event */
-  once(event: string, listener: (...args: any[]) => void): this;
+  once(event: string, listener: (...args: unknown[]) => void): this;
   /** Emits a response event */
-  emit(event: string, ...args: any[]): boolean;
+  emit(event: string, ...args: unknown[]): boolean;
 }
 
 /** Context object passed to every route handler and middleware */
@@ -687,7 +687,7 @@ export interface Context extends Response {
   csrfToken(): string;
 
   /** Validates request parameters, query string, or body using validation callbacks or Zod schemas */
-  validate<T = Record<string, any>>(schema: SchemaValidationObject | ZodLikeSchema): T;
+  validate<T = Record<string, unknown>>(schema: SchemaValidationObject | ZodLikeSchema): T;
 
   /** Checks Content-Type acceptability against requested types */
   accepts(...types: string[]): string | boolean;
@@ -711,6 +711,18 @@ export interface Context extends Response {
       close: () => void
     ) => void
   ): void;
+
+  /** Sets expressive HTTP Cache-Control headers */
+  cacheControl(opts?: { public?: boolean; private?: boolean; noCache?: boolean; noStore?: boolean; maxAge?: number; sMaxAge?: number; staleWhileRevalidate?: number; immutable?: boolean }): this;
+
+  /** Sends a named Server-Sent Event (SSE) payload */
+  sseEvent(event: string, data: JsonValue): this;
+
+  /** Evaluates a lightweight GraphQL query or mutation */
+  graphql(schema: string, resolvers?: Record<string, ((ctx: Context) => unknown) | unknown>): Promise<this>;
+
+  /** Automatically streams periodic SSE payloads at configured time interval */
+  sseInterval(fn: (ctx: Context) => JsonValue | Promise<JsonValue>, intervalMs?: number): this;
 }
 
 /** Next function callback in middleware chain */
@@ -736,12 +748,15 @@ export interface RouteGroup {
 
 /** Velociradix Application instance interface */
 export interface App {
+  /** Low-level C++ App pointer handle */
+  readonly _handle: unknown;
+
   /** Register ultra-fast C++ response fast-path route */
-  fastRoute(method: string, path: string, data: any, status?: number, headers?: Record<string, string>): App;
+  fastRoute(method: string, path: string, data: JsonValue | string, status?: number, headers?: Record<string, string>): App;
   /** Register ultra-fast C++ GET fast-path response */
-  fastGet(path: string, data: any, status?: number, headers?: Record<string, string>): App;
+  fastGet(path: string, data: JsonValue | string, status?: number, headers?: Record<string, string>): App;
   /** Register ultra-fast C++ POST fast-path response */
-  fastPost(path: string, data: any, status?: number, headers?: Record<string, string>): App;
+  fastPost(path: string, data: JsonValue | string, status?: number, headers?: Record<string, string>): App;
   /** Register GET route */
   get(path: string, handler: Handler, options?: RouteOptions): App;
   /** Register POST route */
@@ -803,7 +818,7 @@ export interface App {
   useExpress(fn: (req: Request, res: ExpressResponseShim, next: NextFunction) => void): App;
 
   /** Express Router compatibility adapter for mounting Express Router instances */
-  useExpressRouter(prefixOrRouter: string | ((req: any, res: any, next: any) => void), router?: (req: any, res: any, next: any) => void): App;
+  useExpressRouter(prefixOrRouter: string | ((req: Request, res: ExpressResponseShim, next: NextFunction) => void), router?: (req: Request, res: ExpressResponseShim, next: NextFunction) => void): App;
 
   /** Groups routes under a common URL path prefix */
   group(prefix: string, cb: (group: RouteGroup) => void): App;
@@ -837,6 +852,36 @@ export interface App {
 
   /** Scales application workers across CPU cluster cores */
   cluster(options?: { workers?: number }): App;
+
+  /** File-system based automatic route registration */
+  autoRoute(dirPath: string): App;
+
+  /** Registers a WebSocket upgrade route listener */
+  ws(path: string, handler?: (socket: { send: (msg: string) => void; broadcast: (msg: string) => void; close: () => void }, ctx: Context) => void): App;
+
+  /** Registers a zero-dependency GraphQL endpoint query/mutation handler */
+  graphql(path: string | Record<string, unknown>, schema?: string, resolvers?: Record<string, ((ctx: Context) => unknown) | unknown>): App;
+
+  /** Broadcasts a Server-Sent Event (SSE) message payload to a specific channel */
+  sseBroadcast(channel: string, data: JsonValue): App;
+
+  /** Registers mock API endpoints with simulated latency delay */
+  mockServer(routesMap: Record<string, { status?: number; delayMs?: number; body?: JsonValue }>): App;
+
+  /** Runs programmatic endpoint latency & throughput load benchmark */
+  bench(options?: { port?: number; path?: string; iterations?: number }): Promise<{ iterations: number; totalMs: number; rps: number }>;
+
+  /** Dynamically auto-scales C++ worker thread count based on system load */
+  autoScale(options?: { maxWorkers?: number; minWorkers?: number; intervalMs?: number }): App;
+
+  /** Prints an ASCII table overview of all registered routes to terminal CLI */
+  printRoutes(): App;
+
+  /** Multi-version API router supporting X-API-Version header and path prefixes */
+  versioning(versionsMap: Record<string, Middleware | Handler | App>, options?: { headerName?: string }): App;
+
+  /** Registers a lightweight type-safe JSON-RPC 2.0 endpoint */
+  rpc(path: string | Record<string, (params: unknown, ctx: Context) => unknown>, procedures?: Record<string, (params: unknown, ctx: Context) => unknown>): App;
 
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;
@@ -974,7 +1019,7 @@ export interface VelociradixFactory {
   slowDown: typeof slowDown;
   rateLimit: typeof rateLimit;
   helmet: typeof helmet;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 declare const velociradix: VelociradixFactory;

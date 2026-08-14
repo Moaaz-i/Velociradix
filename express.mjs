@@ -3,6 +3,9 @@ import { createApp } from './index.mjs';
 export function express() {
   const app = createApp();
 
+  // Mount express compatibility bridge for all requests
+  app.useExpress((req, res, next) => next());
+
   // Express style helper methods
   const expressApp = function (req, res, next) {
     if (typeof next === 'function') {
@@ -43,52 +46,71 @@ export function express() {
     return expressApp;
   };
 
+  const createExpressRouteHandler = (handler) => (ctx) => {
+    const req = ctx.req;
+    const res = ctx._expressRes;
+    if (handler.length >= 2 || res) {
+      return handler(req, res, (err) => {
+        if (err) throw err;
+      });
+    }
+    return handler(ctx);
+  };
+
   expressApp.get = function (path, ...handlers) {
     if (handlers.length === 0) return app.get ? app.get(path) : undefined;
     const handler = handlers.pop();
     handlers.forEach(h => expressApp.use(h));
-    app.get(path, (ctx) => {
-      if (ctx._expressRes) {
-        return handler(ctx.req, ctx._expressRes, (err) => {
-          if (err) throw err;
-        });
-      }
-      return handler(ctx);
-    });
+    app.get(path, createExpressRouteHandler(handler));
     return expressApp;
   };
 
   expressApp.post = function (path, ...handlers) {
     const handler = handlers.pop();
     handlers.forEach(h => expressApp.use(h));
-    app.post(path, (ctx) => {
-      if (ctx._expressRes) {
-        return handler(ctx.req, ctx._expressRes, (err) => {
-          if (err) throw err;
-        });
-      }
-      return handler(ctx);
-    });
+    app.post(path, createExpressRouteHandler(handler));
     return expressApp;
   };
 
   expressApp.put = function (path, ...handlers) {
     const handler = handlers.pop();
     handlers.forEach(h => expressApp.use(h));
-    app.put(path, (ctx) => {
-      if (ctx._expressRes) return handler(ctx.req, ctx._expressRes, () => {});
-      return handler(ctx);
-    });
+    app.put(path, createExpressRouteHandler(handler));
     return expressApp;
   };
 
   expressApp.delete = function (path, ...handlers) {
     const handler = handlers.pop();
     handlers.forEach(h => expressApp.use(h));
-    app.del(path, (ctx) => {
-      if (ctx._expressRes) return handler(ctx.req, ctx._expressRes, () => {});
-      return handler(ctx);
-    });
+    app.del(path, createExpressRouteHandler(handler));
+    return expressApp;
+  };
+
+  expressApp.patch = function (path, ...handlers) {
+    const handler = handlers.pop();
+    handlers.forEach(h => expressApp.use(h));
+    app.patch(path, createExpressRouteHandler(handler));
+    return expressApp;
+  };
+
+  expressApp.head = function (path, ...handlers) {
+    const handler = handlers.pop();
+    handlers.forEach(h => expressApp.use(h));
+    app.head(path, createExpressRouteHandler(handler));
+    return expressApp;
+  };
+
+  expressApp.options = function (path, ...handlers) {
+    const handler = handlers.pop();
+    handlers.forEach(h => expressApp.use(h));
+    app.options(path, createExpressRouteHandler(handler));
+    return expressApp;
+  };
+
+  expressApp.all = function (path, ...handlers) {
+    const handler = handlers.pop();
+    handlers.forEach(h => expressApp.use(h));
+    app.all(path, createExpressRouteHandler(handler));
     return expressApp;
   };
 

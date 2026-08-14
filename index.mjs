@@ -511,6 +511,64 @@ class Context {
     this.setHeader('Server-Timing', prev ? `${prev}, ${val}` : val);
     return this;
   }
+  cacheControl(opts = {}) {
+    const parts = [];
+    if (opts.public) parts.push('public');
+    if (opts.private) parts.push('private');
+    if (opts.noCache) parts.push('no-cache');
+    if (opts.noStore) parts.push('no-store');
+    if (opts.maxAge !== undefined) parts.push(`max-age=${opts.maxAge}`);
+    if (opts.sMaxAge !== undefined) parts.push(`s-maxage=${opts.sMaxAge}`);
+    if (opts.staleWhileRevalidate !== undefined) parts.push(`stale-while-revalidate=${opts.staleWhileRevalidate}`);
+    if (opts.immutable) parts.push('immutable');
+    if (parts.length > 0) this.setHeader('Cache-Control', parts.join(', '));
+    return this;
+  }
+  sseEvent(event, data) {
+    const payload = typeof data === 'string' ? data : JSON.stringify(data);
+    this.send(`event: ${event}\ndata: ${payload}\n\n`);
+    return this;
+  }
+  async graphql(schema, resolvers = {}) {
+    let bodyObj = {};
+    try {
+      bodyObj = typeof this.req.body === 'string' ? (JSON.parse(this.req.body || '{}')) : (this.req.body || {});
+    } catch {
+      bodyObj = {};
+    }
+    const query = bodyObj.query || this.query('query') || '';
+    const operationMatch = query.match(/(query|mutation)\s*(\w+)?\s*\{([\s\S]*)\}/i) || query.match(/\{([\s\S]*)\}/);
+    if (!operationMatch) {
+      return this.status(400).json({ errors: [{ message: 'Invalid GraphQL Query' }] });
+    }
+    const bodyContent = operationMatch[3] || operationMatch[1] || '';
+    const fieldMatches = [...bodyContent.matchAll(/(\w+)(?:\s*\(([^)]*)\))?/g)];
+    const data = {};
+    for (const match of fieldMatches) {
+      const fieldName = match[1];
+      if (typeof resolvers[fieldName] === 'function') {
+        data[fieldName] = await resolvers[fieldName](this);
+      } else if (fieldName in resolvers) {
+        data[fieldName] = resolvers[fieldName];
+      }
+    }
+    return this.json({ data });
+  }
+  sseInterval(fn, intervalMs = 1000) {
+    this.setHeader('Content-Type', 'text/event-stream');
+    this.setHeader('Cache-Control', 'no-cache');
+    this.setHeader('Connection', 'keep-alive');
+    const timer = setInterval(async () => {
+      try {
+        const data = await fn(this);
+        const payload = typeof data === 'string' ? data : JSON.stringify(data);
+        this.send(`data: ${payload}\n\n`);
+      } catch {
+        clearInterval(timer);
+      }
+    }, intervalMs);
+    return this;
+  }
   csrfToken() {
     let token = this.cookie('_csrf');
     if (!token) {
@@ -1166,6 +1224,68 @@ function faviconMiddleware(opts = {}) {
       ctx.setHeader('Content-Type', 'image/x-icon');
       ctx.setHeader('Cache-Control', 'public, max-age=86400');
       return ctx.status(200).send(icon);
+    }
+    return next();
+  };
+}
+
+// 21. Circuit Breaker Resiliency Middleware
+function circuitBreakerMiddleware(opts = {}) {
+  const failureThreshold = opts.failureThreshold ?? 5;
+  const resetTimeoutMs = opts.resetTimeoutMs ?? 10000;
+  let failures = 0;
+  let state = 'CLOSED';
+  let lastStateChange = Date.now();
+
+  return async (ctx, next) => {
+    if (state === 'OPEN') {
+      if (Date.now() - lastStateChange > resetTimeoutMs) {
+        state = 'HALF-OPEN';
+      } else {
+        return ctx.status(503).json({ error: 'Circuit Breaker OPEN - Service Temporarily Unavailable' });
+      }
+    }
+    try {
+      await next();
+      if (state === 'HALF-OPEN') {
+        state = 'CLOSED';
+        failures = 0;
+      }
+    } catch (err) {
+      failures++;
+      if (failures >= failureThreshold) {
+        state = 'OPEN';
+        lastStateChange = Date.now();
+      }
+      throw err;
+    }
+  };
+}
+
+// 22. Dynamic Key Rate Limit Middleware
+function rateLimitByKeyMiddleware(opts = {}) {
+  const windowMs = opts.windowMs ?? 60000;
+  const max = opts.max ?? 100;
+  const keyFn = opts.keyFn || ((ctx) => ctx.ip);
+  const message = opts.message ?? 'Too Many Requests';
+  const hits = new Map();
+
+  return async (ctx, next) => {
+    const key = String(await keyFn(ctx) || ctx.ip);
+    const now = Date.now();
+    const record = hits.get(key) || { count: 0, resetTime: now + windowMs };
+    if (now > record.resetTime) {
+      record.count = 0;
+      record.resetTime = now + windowMs;
+    }
+    record.count++;
+    hits.set(key, record);
+    ctx.set({
+      'X-RateLimit-Limit': max,
+      'X-RateLimit-Remaining': Math.max(0, max - record.count),
+    });
+    if (record.count > max) {
+      return ctx.status(429).json({ error: message, key });
     }
     return next();
   };
@@ -1852,18 +1972,7 @@ function createApp() {
       return app.openapi(specOpts);
     },
     exportPostman(name = 'Velociradix Collection') {
-      const items = routeMeta.map(r => ({
-        name: r.name || `${r.method.toUpperCase()} ${r.path}`,
-        request: {
-          method: r.method.toUpperCase(),
-          header: (r.headers || []).map(h => typeof h === 'string' ? { key: h, value: '' } : h),
-          url: { raw: `{{baseUrl}}${r.path}`, host: ['{{baseUrl}}'], path: r.path.split('/').filter(Boolean) }
-        }
-      }));
-      return {
-        info: { name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
-        item: items
-      };
+      return app.postman({ name });
     },
     swagger(docsPath = '/docs') {
       app.get(docsPath, (ctx) => {
@@ -1874,7 +1983,7 @@ function createApp() {
     },
     metricsUI(dashPath = '/velociradix/metrics') {
       app.get(dashPath, (ctx) => {
-        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Velociradix Live Metrics</title><style>:root{--bg:#090d16;--card:#121827;--text:#f3f4f6;--muted:#9ca3af;}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:2rem;}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;border-bottom:1px solid #1f2937;padding-bottom:1rem;}.title{font-size:1.5rem;font-weight:700;color:#60a5fa;display:flex;align-items:center;gap:0.5rem;}.badge{background:#1e3a8a;color:#93c5fd;font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-bottom:2rem;}.card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);}.card-title{font-size:0.875rem;color:var(--muted);margin-bottom:0.5rem;}.card-val{font-size:2rem;font-weight:700;color:#38bdf8;}.table-card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;}table{width:100%;border-collapse:collapse;margin-top:1rem;}th,td{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #1f2937;font-size:0.875rem;}th{color:var(--muted);}</style></head><body><div class="header"><div class="title">⚡ Velociradix Metrics & Health Engine <span class="badge">v7.0.2</span></div><div style="color:#4ade80;font-weight:600;">● Live Engine Active</div></div><div class="grid"><div class="card"><div class="card-title">System Uptime</div><div class="card-val" id="uptime">0s</div></div><div class="card"><div class="card-title">Memory Heap Used</div><div class="card-val" id="heap">0 MB</div></div><div class="card"><div class="card-title">Total Registered Routes</div><div class="card-val" id="routesCount">0</div></div><div class="card"><div class="card-title">Event Loop Engine</div><div class="card-val" style="color:#a78bfa;">Native C++</div></div></div><div class="table-card"><h3 style="margin-top:0;">Registered Routes Overview</h3><table id="routesTable"><thead><tr><th>Method</th><th>Path</th></tr></thead><tbody></tbody></table></div><script>async function update(){try{const res=await fetch(location.pathname+'/json');const data=await res.json();document.getElementById('uptime').innerText=Math.floor(data.uptime)+'s';document.getElementById('heap').innerText=(data.memory.heapUsed/1024/1024).toFixed(2)+' MB';document.getElementById('routesCount').innerText=data.routes.length;document.querySelector('#routesTable tbody').innerHTML=data.routes.map(r=>\`<tr><td style="color:#60a5fa;font-weight:bold;">\${r.method}</td><td>\${r.path}</td></tr>\`).join('');}catch{}}update();setInterval(update,2000);</script></body></html>`;
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Velociradix Live Metrics</title><style>:root{--bg:#090d16;--card:#121827;--text:#f3f4f6;--muted:#9ca3af;}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:2rem;}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;border-bottom:1px solid #1f2937;padding-bottom:1rem;}.title{font-size:1.5rem;font-weight:700;color:#60a5fa;display:flex;align-items:center;gap:0.5rem;}.badge{background:#1e3a8a;color:#93c5fd;font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-bottom:2rem;}.card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);}.card-title{font-size:0.875rem;color:var(--muted);margin-bottom:0.5rem;}.card-val{font-size:2rem;font-weight:700;color:#38bdf8;}.table-card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;}table{width:100%;border-collapse:collapse;margin-top:1rem;}th,td{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #1f2937;font-size:0.875rem;}th{color:var(--muted);}</style></head><body><div class="header"><div class="title">⚡ Velociradix Metrics & Health Engine <span class="badge">v7.1.0</span></div><div style="color:#4ade80;font-weight:600;">● Live Engine Active</div></div><div class="grid"><div class="card"><div class="card-title">System Uptime</div><div class="card-val" id="uptime">0s</div></div><div class="card"><div class="card-title">Memory Heap Used</div><div class="card-val" id="heap">0 MB</div></div><div class="card"><div class="card-title">Total Registered Routes</div><div class="card-val" id="routesCount">0</div></div><div class="card"><div class="card-title">Event Loop Engine</div><div class="card-val" style="color:#a78bfa;">Native C++</div></div></div><div class="table-card"><h3 style="margin-top:0;">Registered Routes Overview</h3><table id="routesTable"><thead><tr><th>Method</th><th>Path</th></tr></thead><tbody></tbody></table></div><script>async function update(){try{const res=await fetch(location.pathname+'/json');const data=await res.json();document.getElementById('uptime').innerText=Math.floor(data.uptime)+'s';document.getElementById('heap').innerText=(data.memory.heapUsed/1024/1024).toFixed(2)+' MB';document.getElementById('routesCount').innerText=data.routes.length;document.querySelector('#routesTable tbody').innerHTML=data.routes.map(r=>\`<tr><td style="color:#60a5fa;font-weight:bold;">\${r.method}</td><td>\${r.path}</td></tr>\`).join('');}catch{}}update();setInterval(update,2000);</script></body></html>`;
         return ctx.html(html);
       });
       app.get(`${dashPath}/json`, (ctx) => {
@@ -1927,6 +2036,164 @@ function createApp() {
         const reqPath = ctx.req.path.slice(prefix.length);
         const target = resolve(dir, reqPath.replace(/^\//, ''));
         return ctx.sendFile(target, opts);
+      });
+      return app;
+    },
+    autoRoute(dirPath) {
+      const fullDir = resolve(dirPath);
+      if (!existsSync(fullDir)) return app;
+      const readDirRecursive = (currentDir, prefix = '') => {
+        const files = readdirSync(currentDir, { withFileTypes: true });
+        for (const file of files) {
+          if (file.isDirectory()) {
+            readDirRecursive(join(currentDir, file.name), `${prefix}/${file.name}`);
+          } else if (file.isFile() && (file.name.endsWith('.js') || file.name.endsWith('.mjs'))) {
+            const routeName = file.name.replace(/\.(js|mjs)$/, '').replace(/^index$/, '');
+            const routePath = `${prefix}/${routeName}`.replace(/\/+/g, '/') || '/';
+            const modulePath = pathToFileURL(join(currentDir, file.name)).href;
+            import(modulePath).then((mod) => {
+              const methods = ['get', 'post', 'put', 'delete', 'patch', 'all'];
+              methods.forEach((m) => {
+                if (typeof mod[m] === 'function' || typeof mod[m.toUpperCase()] === 'function') {
+                  const fn = mod[m] || mod[m.toUpperCase()];
+                  app[m](routePath, fn);
+                }
+              });
+              if (typeof mod.default === 'function') {
+                app.all(routePath, mod.default);
+              }
+            }).catch(() => {});
+          }
+        }
+      };
+      readDirRecursive(fullDir);
+      return app;
+    },
+    ws(path, handler) {
+      const clients = new Set();
+      app.get(path, (ctx) => {
+        const upgrade = ctx.get('upgrade');
+        if (upgrade && upgrade.toLowerCase() === 'websocket') {
+          const socket = {
+            send: (msg) => ctx.send(msg),
+            broadcast: (msg) => {
+              clients.forEach(c => { try { c.send(msg); } catch {} });
+            },
+            close: () => clients.delete(socket)
+          };
+          clients.add(socket);
+          if (handler) handler(socket, ctx);
+          return;
+        }
+        return ctx.status(400).send('WebSocket Upgrade Required');
+      });
+      return app;
+    },
+    graphql(path, schema, resolvers = {}) {
+      const gPath = typeof path === 'string' ? path : '/graphql';
+      const resMap = typeof path === 'object' ? path : resolvers;
+      app.all(gPath, (ctx) => ctx.graphql(schema, resMap));
+      return app;
+    },
+    sseBroadcast(channel, data) {
+      app._sseChannels = app._sseChannels || {};
+      const channelClients = app._sseChannels[channel] || new Set();
+      const payload = typeof data === 'string' ? data : JSON.stringify(data);
+      channelClients.forEach(ctx => {
+        try { ctx.send(`event: ${channel}\ndata: ${payload}\n\n`); } catch {}
+      });
+      return app;
+    },
+    mockServer(routesMap = {}) {
+      for (const key in routesMap) {
+        const parts = key.split(' ');
+        const method = parts.length > 1 ? parts[0] : 'GET';
+        const path = parts.length > 1 ? parts[1] : parts[0];
+        const mock = routesMap[key];
+        const m = method.toLowerCase();
+        app[m](path, async (ctx) => {
+          if (mock.delayMs) await new Promise(r => setTimeout(r, mock.delayMs));
+          return ctx.status(mock.status || 200).json(mock.body || mock);
+        });
+      }
+      return app;
+    },
+    async bench(opts = {}) {
+      const port = opts.port || 8999;
+      const path = opts.path || '/';
+      const iterations = opts.iterations || 100;
+      const start = Date.now();
+      await new Promise((resolve) => app.listen(port, resolve));
+      let completed = 0;
+      for (let i = 0; i < iterations; i++) {
+        await new Promise((res) => {
+          http.get(`http://localhost:${port}${path}`, (r) => {
+            r.on('data', () => {});
+            r.on('end', () => { completed++; res(); });
+          }).on('error', res);
+        });
+      }
+      const totalMs = Date.now() - start;
+      const rps = Math.floor((completed / Math.max(totalMs, 1)) * 1000);
+      app.close();
+      return { iterations: completed, totalMs, rps };
+    },
+    autoScale(opts = {}) {
+      const maxWorkers = opts.maxWorkers || 8;
+      const minWorkers = opts.minWorkers || 2;
+      setInterval(() => {
+        const mem = process.memoryUsage();
+        if (mem.heapUsed > 200 * 1024 * 1024) {
+          app.setWorkers(maxWorkers);
+        } else {
+          app.setWorkers(minWorkers);
+        }
+      }, opts.intervalMs || 5000);
+      return app;
+    },
+    printRoutes() {
+      console.log('\n┌─────────────────────────────────────────────────────────────┐');
+      console.log('│ ⚡ Velociradix Registered Routes Overview                    │');
+      console.log('├────────┬────────────────────────────────────────────────────┤');
+      console.log('│ METHOD │ ROUTE PATH                                         │');
+      console.log('├────────┼────────────────────────────────────────────────────┤');
+      routeMeta.forEach((r) => {
+        const method = r.method.toUpperCase().padEnd(6);
+        const path = r.path.padEnd(50);
+        console.log(`│ ${method} │ ${path} │`);
+      });
+      console.log('└────────┴────────────────────────────────────────────────────┘\n');
+      return app;
+    },
+    versioning(versionsMap = {}, opts = {}) {
+      const headerName = (opts.headerName || 'x-api-version').toLowerCase();
+      app.use(async (ctx, next) => {
+        const verHeader = ctx.get(headerName);
+        const urlVerMatch = ctx.req.path.match(/^\/(v\d+)\//i);
+        const ver = verHeader || (urlVerMatch ? urlVerMatch[1] : null);
+        if (ver && versionsMap[ver]) {
+          const subApp = versionsMap[ver];
+          if (typeof subApp === 'function') return subApp(ctx, next);
+        }
+        return next();
+      });
+      return app;
+    },
+    rpc(path, procedures = {}) {
+      const rpcPath = typeof path === 'string' ? path : '/rpc';
+      const map = typeof path === 'object' ? path : procedures;
+      app.post(rpcPath, async (ctx) => {
+        const body = await ctx.body().catch(() => ({}));
+        const { method, params, id } = body || {};
+        if (!method || typeof map[method] !== 'function') {
+          return ctx.status(404).json({ jsonrpc: '2.0', error: { code: -32601, message: 'Method Not Found' }, id: id ?? null });
+        }
+        try {
+          const result = await map[method](params, ctx);
+          return ctx.json({ jsonrpc: '2.0', result, id: id ?? 1 });
+        } catch (err) {
+          return ctx.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: err.message }, id: id ?? null });
+        }
       });
       return app;
     },
@@ -2059,6 +2326,8 @@ const middlewares = {
   hostGuard: hostGuardMiddleware,
   auditLog: auditLogMiddleware,
   favicon: faviconMiddleware,
+  circuitBreaker: circuitBreakerMiddleware,
+  rateLimitByKey: rateLimitByKeyMiddleware,
 };
 
 export {
@@ -2073,6 +2342,7 @@ export {
   bearerAuthMiddleware as bearerAuth,
   bodyCleanerMiddleware as bodyCleaner,
   cacheMiddleware as cache,
+  circuitBreakerMiddleware as circuitBreaker,
   compressMiddleware as compress,
   concurrencyLimitMiddleware as concurrencyLimit,
   conditionalRequestMiddleware as conditionalRequest,
