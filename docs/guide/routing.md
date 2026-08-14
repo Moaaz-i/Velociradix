@@ -2,6 +2,12 @@
 
 Velociradix features a high-performance **C++ Radix Trie router** capable of handling literal paths, dynamic route parameters, wildcards, route grouping with scoped middlewares, and fast C++ routes.
 
+> [!TIP]
+> Because Velociradix utilizes a native C++ Radix Trie router, route lookup time is $O(k)$ where $k$ is the URL path length. Registering hundreds of routes will not degrade lookup latency.
+
+> [!WARNING]
+> Literal path segments always take precedence over dynamic parameters. If both `/users/profile` and `/users/:id` are defined, `/users/profile` will match the literal handler first.
+
 ---
 
 ## 1. Route Path Parameters (`:param`)

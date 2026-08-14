@@ -20,6 +20,12 @@ import {
 } from 'velociradix';
 ```
 
+> [!IMPORTANT]
+> Global middlewares must be registered **before** route definitions. Middlewares execute in the exact order they are attached using `app.use()`.
+
+> [!CAUTION]
+> Sensitive encryption secrets for `jwtAuth` and `session` must always be read from environment variables (`process.env.JWT_SECRET`), never hardcoded directly in application source code.
+
 ---
 
 ## 🚀 Complete Middlewares Reference (All 36 Middlewares)

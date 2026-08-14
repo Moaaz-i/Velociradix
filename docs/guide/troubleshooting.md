@@ -1,6 +1,6 @@
-# Troubleshooting & Common Issues (30 Problems & Solutions)
+# Troubleshooting & Common Issues (40 Problems & Solutions)
 
-A comprehensive, production-tested diagnostic guide to 30 real-world errors, edge cases, and solutions when developing and deploying with **Velociradix**.
+A comprehensive, production-tested diagnostic guide to 40 real-world errors, edge cases, and solutions when developing and deploying with **Velociradix**.
 
 ---
 
@@ -493,3 +493,181 @@ Recompile addon for current active Node.js runtime:
 ```bash
 npm rebuild velociradix
 ```
+
+---
+
+## 🔄 31. `autoRoute` Changes Not Detected by `tsx watch`
+
+### Symptom
+Creating or modifying route files inside `routes/` does not trigger hot-reloading when running `npx tsx watch server.ts`.
+
+### Root Cause
+`tsx watch` builds a static dependency graph from `server.ts`. Because `autoRoute` scans and imports modules dynamically at runtime, `tsx watch` does not automatically track the `routes/` folder unless instructed.
+
+### Solution
+Pass `--include` to watch the `routes/` directory explicitly:
+```bash
+npx tsx watch --include "routes/**" server.ts
+# Or with native Node.js 20+:
+node --watch --watch-path=routes server.ts
+```
+
+---
+
+## ⚡ 32. `autoRouteAsync` / New Features Not Found in Consumer Project
+
+### Symptom
+`Property 'autoRouteAsync' does not exist on type 'App'` when running in a separate demo project.
+
+### Root Cause
+The consumer project installed `velociradix` from the public npm registry (`npm install velociradix@latest`), which has not yet received unreleased local changes.
+
+### Solution
+Link or install the local workspace folder in your project:
+```bash
+npm install ../velociradix
+```
+
+---
+
+## 🌐 33. VitePress 404 on `.html` Extension in Dev Server
+
+### Symptom
+Navigating to `http://localhost:5173/Velociradix/guide/routing.html` returns a 404 page.
+
+### Root Cause
+In development mode (`npm run docs:dev`), VitePress serves routes as **Clean URLs** (without the `.html` extension).
+
+### Solution
+Open the clean URL without `.html`:
+```text
+http://localhost:5173/Velociradix/guide/routing
+```
+
+---
+
+## 🧵 34. Throughput Drop on Single-Core or Low-End Hardware
+
+### Symptom
+Benchmark req/s drops when setting high worker counts on a 1-core VPS or laptop.
+
+### Root Cause
+Spawning multiple C++ worker threads on 1 CPU core causes high OS thread context-switching and mutex lock contention on the single Node.js V8 event loop.
+
+### Solution
+Auto-tune or set worker count to 1 for low-spec machines:
+```javascript
+app.setWorkers(1);
+```
+
+---
+
+## 📦 35. `ctx.body()` Returns `null` on Large Payloads (`413 Payload Too Large`)
+
+### Symptom
+Request body is empty or fails when uploading JSON/binary larger than 1MB.
+
+### Root Cause
+Velociradix enforces a default payload protection limit to prevent Out-Of-Memory denial of service.
+
+### Solution
+Increase the payload size limit during server setup:
+```javascript
+app.setPayloadLimit(10 * 1024 * 1024); // 10MB
+```
+
+---
+
+## ♻️ 36. `ctx.params` or `ctx.ip` Overwritten Inside `setTimeout`
+
+### Symptom
+Accessing `ctx.params.id` inside `setTimeout(() => { ... }, 1000)` returns values from a different request or `undefined`.
+
+### Root Cause
+Velociradix recycles `Context` objects in a high-speed memory pool (`Object Pooling`) as soon as the HTTP response finishes.
+
+### Solution
+Copy all required request values into local variables before starting asynchronous background tasks:
+```javascript
+app.get('/task/:id', (ctx) => {
+  const taskId = ctx.params.id; // Copy value!
+  setTimeout(() => {
+    console.log('Processing task:', taskId);
+  }, 1000);
+  return ctx.json({ queued: true });
+});
+```
+
+---
+
+## 🛡️ 37. Client IP Always Shows `127.0.0.1` Behind NGINX or Cloudflare
+
+### Symptom
+`ctx.ip` and `rateLimit()` treat all incoming users as the same proxy IP `127.0.0.1`.
+
+### Root Cause
+Velociradix ignores `X-Forwarded-For` headers by default to protect against IP spoofing.
+
+### Solution
+Enable proxy trust mode in your application:
+```javascript
+app.setTrustProxy(true);
+```
+
+---
+
+## 📡 38. Server-Sent Events (SSE) Buffering in NGINX Reverse Proxy
+
+### Symptom
+SSE event stream (`ctx.sseInterval`) delays events and sends them all at once when connection closes.
+
+### Root Cause
+NGINX buffers response stream chunks by default.
+
+### Solution
+Set `X-Accel-Buffering: no` and `Cache-Control: no-cache`:
+```javascript
+app.get('/events', (ctx) => {
+  ctx.setHeader('X-Accel-Buffering', 'no');
+  return ctx.sseInterval(() => ({ data: 'update' }), 1000);
+});
+```
+
+---
+
+## 📘 39. Missing TypeScript Types (`@types/node` Missing)
+
+### Symptom
+TypeScript compiler errors on `Socket`, `Buffer`, or `EventEmitter` types.
+
+### Root Cause
+`@types/node` is missing from project devDependencies.
+
+### Solution
+Install Node.js types:
+```bash
+npm install -D @types/node typescript
+```
+
+---
+
+## ⚠️ 40. Mixing `res.send()` and Returning Values in Express Shim
+
+### Symptom
+`Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client`.
+
+### Root Cause
+Calling `res.send()` inside an Express middleware and also returning a value from the Velociradix route handler.
+
+### Solution
+Choose one response pattern per request:
+```javascript
+// Pattern A: Native return
+app.get('/api', (ctx) => ctx.json({ ok: true }));
+
+// Pattern B: Express shim
+app.get('/api', (ctx) => {
+  ctx.res.status(200).send('ok');
+});
+```
+

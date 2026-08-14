@@ -52,6 +52,12 @@ app
 
 When deploying to budget servers (e.g. Free Tier VMs, Raspberry Pi, AWS t4g.nano, Fly.io):
 
+> [!TIP]
+> On single-core VPS or low-spec hardware (1 vCPU, 512MB RAM), set `app.setWorkers(1)`. Spawning multiple C++ worker threads on a single core causes CPU context-switching overhead and reduces throughput.
+
+> [!WARNING]
+> Avoid setting `app.setWorkers()` significantly higher than `os.cpus().length`. Excess C++ threads contending on a single Node.js V8 event loop degrades performance.
+
 ### Best Practices for Low-Spec Environments:
 1. **Set C++ Workers to 1:** Prevents thread context switching overhead on single-core CPUs:
    ```javascript

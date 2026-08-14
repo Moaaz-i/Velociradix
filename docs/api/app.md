@@ -83,11 +83,20 @@ app.rpc('/rpc', {
 
 ## 📁 File-Based Routing & Mocking
 
-### `app.autoRoute(dirPath)`
-Automatically scans directory files and registers route handlers:
+### `app.autoRoute(dirPath, basePrefix?)`
+Automatically scans directory files and registers route handlers synchronously:
 
 ```javascript
 app.autoRoute('./routes');
+```
+
+---
+
+### `app.autoRouteAsync(dirPath, basePrefix?)`
+Asynchronous file-system route loader that returns a `Promise<App>`:
+
+```javascript
+await app.autoRouteAsync('./routes', '/api/v1');
 ```
 
 ---

@@ -5,6 +5,9 @@ The `ctx` object encapsulates the incoming HTTP Request (`ctx.req`) and outgoing
 > [!TIP]
 > The `ctx` object is pooled in memory (V8 Monomorphic Object Pool) to guarantee zero Garbage Collection freezes during high request throughput.
 
+> [!IMPORTANT]
+> Because `ctx` objects are recycled across requests, do not retain persistent references to `ctx` inside delayed asynchronous timers (`setTimeout`). Always copy required properties (e.g. `const userId = ctx.params.id;`) before background processing.
+
 ---
 
 ## 📥 Request Properties & Operations

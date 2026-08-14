@@ -190,3 +190,45 @@ async function start() {
 
 start();
 ```
+
+---
+
+## 🔥 5. Development & Hot-Reloading (`tsx watch` / `node --watch`)
+
+Because `autoRoute` loads route modules dynamically at runtime via directory scanning, watcher tools (`tsx watch` or `node --watch`) must be configured to watch the `routes/` directory so they detect newly created or modified files.
+
+### Recommended Watch Commands:
+
+#### 1. Using `tsx watch` (Recommended for TypeScript):
+```bash
+npx tsx watch --include "routes/**" server.ts
+```
+
+#### 2. Using native `node --watch` (Node.js 20+):
+```bash
+node --watch --watch-path=routes server.ts
+```
+
+#### 3. Recommended `package.json` Setup:
+```json
+{
+  "name": "my-app",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --include \"routes/**\" server.ts",
+    "dev:node": "node --watch --watch-path=routes server.ts",
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "velociradix": "^7.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
+```
+
+> [!TIP]
+> Always export HTTP handlers as **named exports** (e.g. `export function GET`, `export const POST`) for optimal clarity, type completion, and explicit method mapping.
+
