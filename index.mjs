@@ -160,6 +160,114 @@ function releaseContext(ctx) {
   }
 }
 
+function validateSchemaTarget(data, schemaRule, targetName) {
+  if (!schemaRule) return data;
+  
+  // 1. Zod schema
+  if (typeof schemaRule.safeParse === 'function') {
+    const res = schemaRule.safeParse(data);
+    if (!res.success) {
+      const formatted = res.error?.issues ? res.error.issues.map(i => `${i.path.join('.') || targetName}: ${i.message}`).join(', ') : (res.error?.message || `${targetName} validation failed`);
+      throw new BadRequestError(`Invalid ${targetName}: ${formatted}`, { issues: res.error?.issues || [] });
+    }
+    return res.data;
+  }
+  if (typeof schemaRule.parse === 'function') {
+    try {
+      return schemaRule.parse(data);
+    } catch (e) {
+      throw new BadRequestError(`Invalid ${targetName}: ${e.message}`, { error: e.message });
+    }
+  }
+
+  // 2. TypeBox TypeCompiler Check
+  if (typeof schemaRule.Check === 'function' && typeof schemaRule.Errors === 'function') {
+    if (!schemaRule.Check(data)) {
+      const errors = [...schemaRule.Errors(data)].map(e => `${e.path.replace('/', '') || targetName}: ${e.message}`);
+      throw new BadRequestError(`Invalid ${targetName}: ${errors.join(', ')}`, { errors });
+    }
+    return data;
+  }
+
+  // 3. Valibot (_parse / safeParse)
+  if (typeof schemaRule._parse === 'function') {
+    const res = schemaRule._parse(data);
+    if (res.issues && res.issues.length > 0) {
+      const formatted = res.issues.map(i => `${i.path?.map(p => p.key).join('.') || targetName}: ${i.message}`).join(', ');
+      throw new BadRequestError(`Invalid ${targetName}: ${formatted}`, { issues: res.issues });
+    }
+    return res.output !== undefined ? res.output : data;
+  }
+
+  // 4. Custom validation function
+  if (typeof schemaRule === 'function') {
+    const err = schemaRule(data);
+    if (err && typeof err === 'string') {
+      throw new BadRequestError(`Invalid ${targetName}: ${err}`);
+    } else if (err === false) {
+      throw new BadRequestError(`Invalid ${targetName}`);
+    }
+    return data;
+  }
+
+  // 5. Object rule definitions: { id: { type: 'number', required: true } }
+  if (typeof schemaRule === 'object' && schemaRule !== null) {
+    const errors = [];
+    for (const field in schemaRule) {
+      const rule = schemaRule[field];
+      if (typeof rule !== 'object' || rule === null) continue;
+      const val = data ? data[field] : undefined;
+      if (rule.required && (val === undefined || val === null || val === '')) {
+        errors.push({ field, message: `${field} is required` });
+        continue;
+      }
+      if (val !== undefined && val !== null) {
+        if (rule.type === 'string' && typeof val !== 'string') {
+          errors.push({ field, message: `${field} must be a string` });
+        } else if (rule.type === 'number' && typeof val !== 'number' && isNaN(Number(val))) {
+          errors.push({ field, message: `${field} must be a number` });
+        } else if (rule.type === 'boolean' && typeof val !== 'boolean') {
+          errors.push({ field, message: `${field} must be a boolean` });
+        } else if (rule.type === 'email' && (typeof val !== 'string' || !val.includes('@'))) {
+          errors.push({ field, message: `${field} must be a valid email` });
+        } else if (rule.type === 'array' && !Array.isArray(val)) {
+          errors.push({ field, message: `${field} must be an array` });
+        }
+        if (rule.min !== undefined) {
+          if (typeof val === 'string' || Array.isArray(val)) {
+            if (val.length < rule.min) errors.push({ field, message: `${field} length must be at least ${rule.min}` });
+          } else if (typeof val === 'number' && val < rule.min) {
+            errors.push({ field, message: `${field} must be at least ${rule.min}` });
+          }
+        }
+        if (rule.max !== undefined) {
+          if (typeof val === 'string' || Array.isArray(val)) {
+            if (val.length > rule.max) errors.push({ field, message: `${field} length must be at most ${rule.max}` });
+          } else if (typeof val === 'number' && val > rule.max) {
+            errors.push({ field, message: `${field} must be at most ${rule.max}` });
+          }
+        }
+        if (rule.pattern && rule.pattern instanceof RegExp && !rule.pattern.test(String(val))) {
+          errors.push({ field, message: `${field} format is invalid` });
+        }
+        if (typeof rule.custom === 'function') {
+          const customRes = rule.custom(val);
+          if (typeof customRes === 'string') {
+            errors.push({ field, message: customRes });
+          } else if (customRes === false) {
+            errors.push({ field, message: `${field} is invalid` });
+          }
+        }
+      }
+    }
+    if (errors.length > 0) {
+      throw new BadRequestError(`Validation failed for ${targetName}`, { errors });
+    }
+  }
+
+  return data;
+}
+
 class Context {
   constructor(ptr, appInstance) {
     this._req = new Request(ptr);
@@ -460,42 +568,34 @@ class Context {
   }
   validate(schema) {
     if (!schema) return true;
-    if (typeof schema.safeParse === 'function' || typeof schema.parse === 'function') {
+    if (typeof schema.safeParse === 'function' || typeof schema.parse === 'function' || typeof schema._parse === 'function') {
       schema = { body: schema };
     }
+    this.valid = this.valid || {};
+
     if (schema.params) {
-      const err = schema.params(this.params);
-      if (err) throw new BadRequestError(`Invalid params: ${err}`);
+      this.valid.params = validateSchemaTarget(this.params, schema.params, 'params');
+      this.validParams = this.valid.params;
     }
     if (schema.query) {
-      const err = schema.query(queryParse(this.req.query));
-      if (err) throw new BadRequestError(`Invalid query: ${err}`);
+      const q = typeof this.query === 'function' ? queryParse(this.req.query) : this.query;
+      this.valid.query = validateSchemaTarget(q, schema.query, 'query');
+      this.validQuery = this.valid.query;
     }
     if (schema.body) {
-      let parsedBody = {};
-      if (this.req.body) {
+      let parsedBody = this._bodyData;
+      if (parsedBody === undefined && this.req.body) {
         try { parsedBody = JSON.parse(this.req.body); } catch { parsedBody = this.req.body; }
       }
-      if (typeof schema.body.safeParse === 'function') {
-        const result = schema.body.safeParse(parsedBody);
-        if (!result.success) {
-          const formatted = result.error?.issues ? result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ') : (result.error?.message || 'Validation failed');
-          throw new BadRequestError(`Invalid body: ${formatted}`);
-        }
-      } else if (typeof schema.body.parse === 'function') {
-        try {
-          schema.body.parse(parsedBody);
-        } catch (e) {
-          throw new BadRequestError(`Invalid body: ${e.message}`);
-        }
-      } else if (typeof schema.body === 'function') {
-        const err = schema.body(parsedBody);
-        if (err) throw new BadRequestError(`Invalid body: ${err}`);
-      }
+      this.valid.body = validateSchemaTarget(parsedBody ?? {}, schema.body, 'body');
+      this.validBody = this.valid.body;
+      this._bodyData = this.valid.body;
     }
     if (schema.headers) {
-      const err = schema.headers(this.req.headers);
-      if (err) throw new BadRequestError(`Invalid headers: ${err}`);
+      this.valid.headers = validateSchemaTarget(this.req.headers, schema.headers, 'headers');
+    }
+    if (schema.cookies) {
+      this.valid.cookies = validateSchemaTarget(this.cookies, schema.cookies, 'cookies');
     }
     return true;
   }
@@ -1459,23 +1559,136 @@ function getSwaggerHtml(spec) {
 </html>`;
 }
 
+function createEventBus(options = {}) {
+  const listeners = new Map();
+  const regexCache = new Map();
+  let transport = options.transport || null;
+
+  function patternToRegex(pattern) {
+    if (regexCache.has(pattern)) return regexCache.get(pattern);
+    const escaped = pattern
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '___DOUBLE_STAR___')
+      .replace(/\*/g, '[^.]+')
+      .replace(/___DOUBLE_STAR___/g, '.*');
+    const regex = new RegExp(`^${escaped}$`);
+    regexCache.set(pattern, regex);
+    return regex;
+  }
+
+  const bus = {
+    setTransport(t) {
+      transport = t;
+      return bus;
+    },
+    on(pattern, handler) {
+      if (!listeners.has(pattern)) listeners.set(pattern, new Set());
+      listeners.get(pattern).add(handler);
+      return () => bus.off(pattern, handler);
+    },
+    once(pattern, handler) {
+      const wrapper = async (...args) => {
+        bus.off(pattern, wrapper);
+        return handler(...args);
+      };
+      return bus.on(pattern, wrapper);
+    },
+    off(pattern, handler) {
+      const set = listeners.get(pattern);
+      if (set) {
+        set.delete(handler);
+        if (set.size === 0) listeners.delete(pattern);
+      }
+      return bus;
+    },
+    async emit(event, payload, metadata = {}) {
+      if (transport && typeof transport.publish === 'function') {
+        try { await transport.publish(event, payload, metadata); } catch {}
+      }
+      const promises = [];
+      for (const [pattern, handlers] of listeners.entries()) {
+        const regex = patternToRegex(pattern);
+        if (regex.test(event)) {
+          for (const handler of handlers) {
+            promises.push(Promise.resolve().then(() => handler(payload, { event, pattern, ...metadata })));
+          }
+        }
+      }
+      return Promise.all(promises);
+    },
+    async request(event, payload, timeoutMs = 5000) {
+      const correlationId = randomBytes(16).toString('hex');
+      const replyEvent = `__reply.${event}.${correlationId}`;
+      
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          bus.off(replyEvent, handler);
+          reject(new Error(`Event request timed out after ${timeoutMs}ms for topic '${event}'`));
+        }, timeoutMs);
+        if (timer.unref) timer.unref();
+
+        const handler = (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        };
+
+        bus.once(replyEvent, handler);
+
+        bus.emit(event, payload, { correlationId, replyTo: replyEvent }).catch((err) => {
+          clearTimeout(timer);
+          bus.off(replyEvent, handler);
+          reject(err);
+        });
+      });
+    },
+    reply(meta, response) {
+      if (meta && meta.replyTo) {
+        return bus.emit(meta.replyTo, response);
+      }
+    }
+  };
+
+  return bus;
+}
+
 function createApp() {
   const h = native.createApp();
   const mws = [];
   const routes = [null];
   const routeMeta = [];
   const emitter = new EventEmitter();
+  const eventBus = createEventBus();
   let onErr = null;
 
-  const registerRoute = (method, path, handler, options = {}) => {
+  const registerRoute = (method, path, handlerOrOpts, maybeOptsOrHandler = {}) => {
+    let handler = handlerOrOpts;
+    let options = maybeOptsOrHandler;
+
+    if (typeof handlerOrOpts === 'object' && typeof maybeOptsOrHandler === 'function') {
+      options = handlerOrOpts;
+      handler = maybeOptsOrHandler;
+    }
+    options = options || {};
+
     const id = native.addRoute(h, method.toUpperCase(), path);
-    routes[id] = { handler, mws: options.middlewares ?? [] };
+    const routeMiddlewares = [...(options.middlewares ?? [])];
+
+    if (options.schema || options.validate) {
+      const schemaToValidate = options.schema || options.validate;
+      routeMiddlewares.unshift((ctx, next) => {
+        ctx.validate(schemaToValidate);
+        return next();
+      });
+    }
+
+    routes[id] = { handler, mws: routeMiddlewares };
     if (!options.internal && path !== '/*' && !path.endsWith('/*')) {
       routeMeta.push({
         name: options.name || `${method.toUpperCase()} ${path}`,
         method: method.toUpperCase(),
         path,
         description: options.description || '',
+        schema: options.schema || options.validate || null,
         headers: options.headers || [],
         body: options.body || null,
         query: options.query || [],
@@ -1982,11 +2195,84 @@ function createApp() {
     openapi(specOpts = {}) {
       const paths = {};
       for (const r of routeMeta) {
-        paths[r.path] = paths[r.path] || {};
-        paths[r.path][r.method.toLowerCase()] = {
+        const openApiPath = r.path.replace(/:([a-zA-Z0-9_]+)/g, '{$1}');
+        paths[openApiPath] = paths[openApiPath] || {};
+        
+        const methodObj = {
           summary: r.description || `${r.method} ${r.path}`,
-          responses: { 200: { description: 'Successful response' } },
+          parameters: [],
+          responses: {},
         };
+
+        const pathMatches = [...r.path.matchAll(/:([a-zA-Z0-9_]+)/g)];
+        pathMatches.forEach((m) => {
+          methodObj.parameters.push({
+            name: m[1],
+            in: 'path',
+            required: true,
+            schema: { type: 'string' }
+          });
+        });
+
+        if (r.query && Array.isArray(r.query)) {
+          r.query.forEach((q) => {
+            const qName = typeof q === 'string' ? q : (q.name || q.key);
+            methodObj.parameters.push({
+              name: qName,
+              in: 'query',
+              required: Boolean(q.required),
+              schema: { type: q.type || 'string' }
+            });
+          });
+        }
+
+        if (r.schema && typeof r.schema === 'object') {
+          if (r.schema.query && typeof r.schema.query === 'object') {
+            for (const qKey in r.schema.query) {
+              if (!methodObj.parameters.some(p => p.name === qKey && p.in === 'query')) {
+                methodObj.parameters.push({
+                  name: qKey,
+                  in: 'query',
+                  required: Boolean(r.schema.query[qKey]?.required),
+                  schema: { type: r.schema.query[qKey]?.type || 'string' }
+                });
+              }
+            }
+          }
+        }
+
+        if (['POST', 'PUT', 'PATCH'].includes(r.method)) {
+          if (r.body || (r.schema && r.schema.body)) {
+            methodObj.requestBody = {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { type: 'object', example: r.body || {} }
+                }
+              }
+            };
+          }
+        }
+
+        if (r.responses && r.responses.length > 0) {
+          r.responses.forEach(resp => {
+            const code = String(resp.code || resp.status || 200);
+            methodObj.responses[code] = {
+              description: resp.name || (code === '200' ? 'Success' : code === '201' ? 'Created' : 'Response'),
+              content: {
+                'application/json': {
+                  schema: { type: 'object', example: resp.body || resp }
+                }
+              }
+            };
+          });
+        } else {
+          methodObj.responses['200'] = { description: 'Successful response' };
+        }
+
+        if (methodObj.parameters.length === 0) delete methodObj.parameters;
+
+        paths[openApiPath][r.method.toLowerCase()] = methodObj;
       }
       return {
         openapi: '3.0.0',
@@ -2234,6 +2520,81 @@ function createApp() {
       });
       return app;
     },
+    eventBus,
+    onEvent(event, handler) { return eventBus.on(event, handler); },
+    onceEvent(event, handler) { return eventBus.once(event, handler); },
+    emitEvent(event, payload, meta) { return eventBus.emit(event, payload, meta); },
+    requestEvent(event, payload, timeoutMs) { return eventBus.request(event, payload, timeoutMs); },
+    broker(adapter) { eventBus.setTransport(adapter); return app; },
+    registerController(ControllerClass, ...constructorArgs) {
+      const instance = typeof ControllerClass === 'function' && ControllerClass.prototype 
+        ? new ControllerClass(...constructorArgs) 
+        : ControllerClass;
+
+      const prefix = ControllerClass.__velociradix_prefix || instance.__velociradix_prefix || '';
+      const controllerMws = ControllerClass.__velociradix_middlewares || instance.__velociradix_middlewares || [];
+      const routesMap = ControllerClass.__velociradix_routes || instance.__velociradix_routes || [];
+
+      const attachRoutes = (targetRouter) => {
+        routesMap.forEach(({ method, path, propertyKey, middlewares = [], paramsMap = [] }) => {
+          const routeHandler = async (ctx) => {
+            let args = [ctx];
+            if (paramsMap && paramsMap.length > 0) {
+              args = [];
+              for (let i = 0; i < paramsMap.length; i++) {
+                const p = paramsMap[i];
+                if (!p) {
+                  args.push(ctx);
+                  continue;
+                }
+                switch (p.type) {
+                  case 'body':
+                    args.push(p.property ? (ctx.validBody?.[p.property] ?? (await ctx.body())?.[p.property]) : (ctx.validBody ?? await ctx.body()));
+                    break;
+                  case 'param':
+                    args.push(p.property ? (ctx.params?.[p.property]) : ctx.params);
+                    break;
+                  case 'query':
+                    args.push(p.property ? (typeof ctx.query === 'function' ? ctx.query(p.property) : ctx.query?.[p.property]) : (typeof ctx.query === 'function' ? ctx.query() : ctx.query));
+                    break;
+                  case 'headers':
+                    args.push(p.property ? ctx.get(p.property) : ctx.req.headers);
+                    break;
+                  case 'ctx':
+                    args.push(ctx);
+                    break;
+                  case 'state':
+                    args.push(p.property ? ctx.state?.[p.property] : ctx.state);
+                    break;
+                  default:
+                    args.push(ctx);
+                }
+              }
+            }
+            const result = await instance[propertyKey](...args);
+            if (!ctx.done && result !== undefined) {
+              if (typeof result === 'object' && result !== null) {
+                return ctx.json(result);
+              }
+              return ctx.send(result);
+            }
+            return result;
+          };
+
+          const m = method.toLowerCase();
+          if (typeof targetRouter[m] === 'function') {
+            targetRouter[m](path, routeHandler, { middlewares });
+          }
+        });
+      };
+
+      if (prefix) {
+        app.group(prefix, controllerMws, attachRoutes);
+      } else {
+        attachRoutes(app);
+      }
+      return app;
+    },
     setPayloadLimit(n) { native.setPayloadLimit(h, n); return app; },
     setWorkers(n) { native.setWorkers(h, n); return app; },
     onError(fn) { onErr = fn; return app; },
@@ -2386,6 +2747,7 @@ export {
   corsMiddleware as cors,
   cspMiddleware as csp,
   createApp,
+  createEventBus,
   csrfMiddleware as csrf,
   decryptValue,
   encryptValue,
@@ -2426,6 +2788,7 @@ function velociradix() {
 Object.assign(velociradix, {
   app,
   createApp,
+  createEventBus,
   Context,
   Request,
   jwtSign,

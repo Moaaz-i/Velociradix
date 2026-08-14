@@ -465,6 +465,10 @@ export interface ExpressResponseShim {
 export interface RouteOptions {
   /** Array of route-specific middlewares */
   middlewares?: Middleware[];
+  /** Route schema validation definition (Zod, TypeBox, Valibot, or object rules) */
+  schema?: Record<string, unknown> | ZodLikeSchema | SchemaValidationObject;
+  /** Route schema validation definition alias */
+  validate?: Record<string, unknown> | ZodLikeSchema | SchemaValidationObject;
   /** Name of the request action (e.g. 'Add User') */
   name?: string;
   /** Detailed route description for API documentation */
@@ -631,6 +635,21 @@ export interface Context extends Response {
   state: Record<string, JsonValue>;
   /** Cookie-backed encrypted session object */
   session: Record<string, JsonValue>;
+
+  /** Validated request payload map populated by schema validator */
+  valid: {
+    body?: any;
+    query?: any;
+    params?: any;
+    headers?: any;
+    cookies?: any;
+  };
+  /** Validated request body (alias) */
+  validBody?: any;
+  /** Validated request query parameters (alias) */
+  validQuery?: any;
+  /** Validated request route parameters (alias) */
+  validParams?: any;
 
   /** Case-insensitive header lookup on incoming request */
   get(name: string): string | undefined;
@@ -891,6 +910,22 @@ export interface App {
   /** Registers a lightweight type-safe JSON-RPC 2.0 endpoint */
   rpc(path: string | Record<string, (params: unknown, ctx: Context) => unknown>, procedures?: Record<string, (params: unknown, ctx: Context) => unknown>): App;
 
+  /** Built-in Microservices EventBus instance */
+  readonly eventBus: EventBus;
+  /** Subscribes to an event pattern on the event bus (supports wildcards e.g. 'user.*') */
+  onEvent<T = any>(event: string, handler: (payload: T, meta: { event: string; pattern: string; correlationId?: string; replyTo?: string }) => void | Promise<void>): () => void;
+  /** Subscribes once to an event on the event bus */
+  onceEvent<T = any>(event: string, handler: (payload: T, meta: { event: string; pattern: string; correlationId?: string; replyTo?: string }) => void | Promise<void>): () => void;
+  /** Emits an event with optional payload and metadata across listeners and transport */
+  emitEvent<T = any>(event: string, payload?: T, meta?: Record<string, unknown>): Promise<unknown[]>;
+  /** Performs an asynchronous Request-Reply event message over topic with timeout */
+  requestEvent<T = any, R = any>(event: string, payload?: T, timeoutMs?: number): Promise<R>;
+  /** Configures a custom message broker transport adapter for the EventBus (e.g. Redis, NATS) */
+  broker(adapter: EventBusOptions['transport']): App;
+
+  /** Registers a decorated Controller class onto the application router */
+  registerController(ControllerClass: any, ...constructorArgs: any[]): App;
+
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;
   /** Sets number of C++ worker threads for multithreaded event loop */
@@ -915,6 +950,28 @@ export interface App {
   /** Stops the HTTP server */
   close(): App;
 }
+
+/** Microservices & EventBus Options */
+export interface EventBusOptions {
+  transport?: {
+    publish: (event: string, payload: unknown, metadata?: Record<string, unknown>) => void | Promise<void>;
+    subscribe?: (event: string, handler: (payload: unknown, meta?: unknown) => void) => void;
+  };
+}
+
+/** Microservices EventBus instance */
+export interface EventBus {
+  setTransport(transport: EventBusOptions['transport']): this;
+  on<T = any>(pattern: string, handler: (payload: T, meta: { event: string; pattern: string; correlationId?: string; replyTo?: string }) => void | Promise<void>): () => void;
+  once<T = any>(pattern: string, handler: (payload: T, meta: { event: string; pattern: string; correlationId?: string; replyTo?: string }) => void | Promise<void>): () => void;
+  off(pattern: string, handler: Function): this;
+  emit<T = any>(event: string, payload?: T, metadata?: Record<string, unknown>): Promise<unknown[]>;
+  request<T = any, R = any>(event: string, payload?: T, timeoutMs?: number): Promise<R>;
+  reply<T = any>(meta: { replyTo?: string }, response: T): Promise<unknown[]> | void;
+}
+
+/** Creates a standalone EventBus instance */
+export function createEventBus(options?: EventBusOptions): EventBus;
 
 /** Creates and initializes a new Velociradix application instance */
 export function createApp(): App;

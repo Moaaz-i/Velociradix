@@ -87,3 +87,38 @@ exp.get('/express', (req: ExpressRequest, res: ExpressResponse) => {
 customApp.autoRoute('./routes');
 const routePromise: Promise<App> = customApp.autoRouteAsync('./routes', '/api');
 
+// EventBus test
+const bus = velociradix.createEventBus();
+bus.on('user.*', (payload, meta) => {
+  console.log(payload, meta.event);
+});
+bus.emit('user.created', { id: 1 });
+
+customApp.onEvent('order.*', (data) => console.log(data));
+customApp.emitEvent('order.placed', { orderId: '123' });
+
+// Client test
+import { createClient } from '../client.mjs';
+const api = createClient('http://localhost:3000');
+const clientPromise = api.users['123'].get();
+
+// Decorators test
+import { Controller, Get, Post, Body, Param, Query, registerController } from '../decorators.mjs';
+
+@Controller('/items')
+class ItemController {
+  @Get('/:id')
+  getItem(@Param('id') id: string) {
+    return { id };
+  }
+
+  @Post('/')
+  createItem(@Body() body: any) {
+    return { created: true, body };
+  }
+}
+
+customApp.registerController(ItemController);
+registerController(customApp, ItemController);
+
+

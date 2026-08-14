@@ -1,6 +1,6 @@
 {
   "name": "velociradix",
-  "version": "7.4.1",
+  "version": "7.5.0",
   "description": "Zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework. Driven by native event loops (kqueue/epoll), multi-threaded SO_REUSEPORT workers, Radix Trie router, Postman/Swagger UI, SSE, CORS & 36+ built-in middlewares. ~3.5x faster than node:http.",
   "author": "moaaz yahia zakaria",
   "license": "MIT",
@@ -23,6 +23,14 @@
     "./express": {
       "types": "./express.d.ts",
       "default": "./express.mjs"
+    },
+    "./client": {
+      "types": "./client.d.ts",
+      "default": "./client.mjs"
+    },
+    "./decorators": {
+      "types": "./decorators.d.ts",
+      "default": "./decorators.mjs"
     }
   },
   "bin": {
@@ -59,6 +67,10 @@
     "index.d.ts",
     "express.mjs",
     "express.d.ts",
+    "client.mjs",
+    "client.d.ts",
+    "decorators.mjs",
+    "decorators.d.ts",
     "src/velociradix.hpp",
     "src/velociradix.cpp",
     "src/main.cpp",
@@ -90,7 +102,7 @@
     "install": "node scripts/install.mjs",
     "build": "make",
     "test": "make test",
-    "typecheck": "tsc --noEmit --module NodeNext --moduleResolution NodeNext index.d.ts express.d.ts tests/test-types.ts",
+    "typecheck": "tsc --noEmit --module NodeNext --moduleResolution NodeNext --experimentalDecorators index.d.ts express.d.ts client.d.ts decorators.d.ts tests/test-types.ts",
     "bench": "node bench/bench-addon.mjs 4",
     "clean": "make clean",
     "docs:dev": "vitepress dev docs",
