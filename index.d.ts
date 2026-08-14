@@ -9,6 +9,46 @@ export type JsonArray = Array<JsonPrimitive | JsonObject | JsonArray>;
 /** All JSON-compatible data values */
 export type JsonValue = JsonPrimitive | JsonObject | JsonArray;
 
+/** Standard HTTP Status Codes */
+export type HttpStatusCode =
+  | 100 | 101 | 102 | 103
+  | 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226
+  | 300 | 301 | 302 | 303 | 304 | 305 | 307 | 308
+  | 400 | 401 | 402 | 403 | 404 | 405 | 406 | 407 | 408 | 409 | 410 | 411 | 412 | 413 | 414 | 415 | 416 | 417 | 418 | 421 | 422 | 423 | 424 | 425 | 426 | 428 | 429 | 431 | 451
+  | 500 | 501 | 502 | 503 | 504 | 505 | 506 | 507 | 508 | 510 | 511;
+
+/** Standard HTTP Status Names */
+export type HttpStatusName =
+  | 'Continue' | 'Switching Protocols' | 'Processing' | 'Early Hints'
+  | 'OK' | 'Created' | 'Accepted' | 'Non-Authoritative Information' | 'No Content' | 'Reset Content' | 'Partial Content'
+  | 'Multiple Choices' | 'Moved Permanently' | 'Found' | 'See Other' | 'Not Modified' | 'Temporary Redirect' | 'Permanent Redirect'
+  | 'Bad Request' | 'Unauthorized' | 'Payment Required' | 'Forbidden' | 'Not Found' | 'Method Not Allowed' | 'Not Acceptable'
+  | 'Proxy Authentication Required' | 'Request Timeout' | 'Conflict' | 'Gone' | 'Length Required' | 'Precondition Failed'
+  | 'Payload Too Large' | 'URI Too Long' | 'Unsupported Media Type' | 'Range Not Satisfiable' | 'Expectation Failed'
+  | 'I\'m a teapot' | 'Unprocessable Entity' | 'Locked' | 'Failed Dependency' | 'Too Early' | 'Upgrade Required'
+  | 'Precondition Required' | 'Too Many Requests' | 'Request Header Fields Too Large' | 'Unavailable For Legal Reasons'
+  | 'Internal Server Error' | 'Not Implemented' | 'Bad Gateway' | 'Service Unavailable' | 'Gateway Timeout'
+  | 'HTTP Version Not Supported' | 'Variant Also Negotiates' | 'Insufficient Storage' | 'Loop Detected' | 'Network Authentication Required';
+
+/** HTTP Methods */
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS' | 'TRACE' | 'CONNECT' | 'ALL' | string;
+
+/** Standard HTTP Request/Response Headers */
+export type HttpHeaderName =
+  | 'Accept' | 'Accept-Charset' | 'Accept-Encoding' | 'Accept-Language' | 'Accept-Ranges'
+  | 'Access-Control-Allow-Credentials' | 'Access-Control-Allow-Headers' | 'Access-Control-Allow-Methods' | 'Access-Control-Allow-Origin' | 'Access-Control-Expose-Headers' | 'Access-Control-Max-Age' | 'Access-Control-Request-Headers' | 'Access-Control-Request-Method'
+  | 'Age' | 'Allow' | 'Authorization' | 'Cache-Control' | 'Connection' | 'Content-Disposition' | 'Content-Encoding' | 'Content-Language' | 'Content-Length' | 'Content-Location' | 'Content-Range' | 'Content-Security-Policy' | 'Content-Type'
+  | 'Cookie' | 'Date' | 'ETag' | 'Expect' | 'Expires' | 'Forwarded' | 'From' | 'Host' | 'If-Match' | 'If-Modified-Since' | 'If-None-Match' | 'If-Range' | 'If-Unmodified-Since'
+  | 'Last-Modified' | 'Location' | 'Max-Forwards' | 'Origin' | 'Pragma' | 'Proxy-Authenticate' | 'Proxy-Authorization' | 'Range' | 'Referer' | 'Referrer-Policy' | 'Retry-After'
+  | 'Server' | 'Server-Timing' | 'Set-Cookie' | 'Strict-Transport-Security' | 'User-Agent' | 'Vary' | 'Via' | 'WWW-Authenticate' | 'X-Content-Type-Options' | 'X-Frame-Options' | 'X-Powered-By' | 'X-Request-ID' | 'X-Forwarded-For' | 'X-Forwarded-Proto' | string;
+
+/** Common Media MIME Types */
+export type MimeType =
+  | 'application/json' | 'text/html' | 'text/plain' | 'text/css' | 'text/javascript' | 'application/javascript'
+  | 'application/xml' | 'text/xml' | 'multipart/form-data' | 'application/x-www-form-urlencoded'
+  | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/svg+xml' | 'image/webp' | 'image/x-icon'
+  | 'audio/mpeg' | 'audio/ogg' | 'video/mp4' | 'video/webm' | 'application/pdf' | 'application/octet-stream' | string;
+
 /** Base HTTP Error class for Velociradix exceptions */
 export class HttpError extends Error {
   /** The HTTP status code (e.g. 400, 401, 404, 500) */
@@ -26,8 +66,79 @@ export class UnauthorizedError extends HttpError { constructor(message?: string,
 export class ForbiddenError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
 /** 404 Not Found error exception */
 export class NotFoundError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 405 Method Not Allowed error exception */
+export class MethodNotAllowedError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 409 Conflict error exception */
+export class ConflictError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 422 Unprocessable Entity error exception */
+export class UnprocessableEntityError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 429 Too Many Requests error exception */
+export class TooManyRequestsError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
 /** 500 Internal Server Error exception */
 export class InternalServerError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 502 Bad Gateway error exception */
+export class BadGatewayError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 503 Service Unavailable error exception */
+export class ServiceUnavailableError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+/** 504 Gateway Timeout error exception */
+export class GatewayTimeoutError extends HttpError { constructor(message?: string, details?: Record<string, JsonValue>); }
+
+/** Validation Rule Type */
+export type ValidationRuleType = 'string' | 'number' | 'boolean' | 'email' | 'array' | 'object' | 'date';
+
+/** Single Field Validation Rule */
+export interface ValidationRule {
+  type?: ValidationRuleType;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  pattern?: RegExp;
+  custom?: (value: any) => boolean | string;
+}
+
+/** Schema Validation Rules Map */
+export type ValidationRulesMap = Record<string, ValidationRule>;
+
+/** Validation Error Detail */
+export interface ValidationErrorDetail {
+  field: string;
+  message: string;
+  rule?: string;
+}
+
+/** Validation Result Container */
+export interface ValidationResult<T = Record<string, any>> {
+  valid: boolean;
+  errors?: ValidationErrorDetail[];
+  data?: T;
+}
+
+/** Standard JSON API Response Wrapper */
+export interface JsonResponsePayload<T = JsonValue> {
+  status?: number | string;
+  message?: string;
+  data?: T;
+  error?: string;
+  details?: Record<string, JsonValue>;
+  meta?: Record<string, JsonValue>;
+}
+
+/** Paginated API Data Response Wrapper */
+export interface PaginatedResponse<T = any> {
+  items: T[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
+
+/** Extendable User State Interface */
+export interface ContextState extends Record<string, any> {}
+
+/** Extendable User Session Interface */
+export interface ContextSession extends Record<string, any> {}
 
 /** Cookie configuration options for `ctx.setCookie()` */
 export interface SetCookieOptions {
