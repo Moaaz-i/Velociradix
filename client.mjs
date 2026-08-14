@@ -3,8 +3,16 @@
  * Inspired by Eden Treaty & tRPC.
  */
 
-export function createClient(baseUrl = '', defaultOptions = {}) {
-  const normalizedBaseUrl = String(baseUrl).replace(/\/+$/, '');
+export function createClient(baseUrlOrOptions = '', maybeOptions = {}) {
+  let baseUrl = baseUrlOrOptions;
+  let defaultOptions = maybeOptions;
+
+  if (typeof baseUrlOrOptions === 'object' && baseUrlOrOptions !== null) {
+    defaultOptions = baseUrlOrOptions;
+    baseUrl = defaultOptions.baseUrl || defaultOptions.baseURL || defaultOptions.url || '';
+  }
+
+  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
   const customFetch = defaultOptions.fetch || globalThis.fetch;
 
   if (typeof customFetch !== 'function') {
@@ -17,11 +25,13 @@ export function createClient(baseUrl = '', defaultOptions = {}) {
     const path = pathSegments.map((seg) => encodeURIComponent(String(seg))).join('/');
     let url = `${normalizedBaseUrl}/${path}`;
 
+    const opts = callOptions || {};
+
     // Query parameters
-    if (callOptions.query && typeof callOptions.query === 'object') {
+    if (opts.query && typeof opts.query === 'object') {
       const q = new URLSearchParams();
-      for (const key in callOptions.query) {
-        const val = callOptions.query[key];
+      for (const key in opts.query) {
+        const val = opts.query[key];
         if (val !== undefined && val !== null) {
           if (Array.isArray(val)) {
             val.forEach((item) => q.append(key, String(item)));
@@ -36,11 +46,11 @@ export function createClient(baseUrl = '', defaultOptions = {}) {
 
     const headers = {
       ...(defaultOptions.headers || {}),
-      ...(callOptions.headers || {}),
+      ...(opts.headers || {}),
     };
 
-    if (defaultOptions.token || callOptions.token) {
-      const token = callOptions.token || defaultOptions.token;
+    if (defaultOptions.token || opts.token) {
+      const token = opts.token || defaultOptions.token;
       headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
     }
 
@@ -49,18 +59,25 @@ export function createClient(baseUrl = '', defaultOptions = {}) {
       method: httpMethod,
       headers,
       ...defaultOptions.fetchOptions,
-      ...callOptions.fetchOptions,
+      ...opts.fetchOptions,
     };
 
-    // Body handling
-    if (callOptions.body !== undefined) {
-      if (typeof callOptions.body === 'object' && callOptions.body !== null && !(callOptions.body instanceof FormData) && !(callOptions.body instanceof Blob) && !(callOptions.body instanceof ArrayBuffer) && !(callOptions.body instanceof Uint8Array)) {
+    // Body handling (supports both { body: data } and direct { data } on POST/PUT/PATCH)
+    let bodyPayload = opts.body;
+    if (bodyPayload === undefined && ['POST', 'PUT', 'PATCH'].includes(httpMethod)) {
+      if (opts && typeof opts === 'object' && !opts.query && !opts.headers && !opts.token && !opts.timeout && !opts.fetchOptions) {
+        bodyPayload = opts;
+      }
+    }
+
+    if (bodyPayload !== undefined) {
+      if (typeof bodyPayload === 'object' && bodyPayload !== null && !(bodyPayload instanceof FormData) && !(bodyPayload instanceof Blob) && !(bodyPayload instanceof ArrayBuffer) && !(bodyPayload instanceof Uint8Array)) {
         if (!headers['Content-Type'] && !headers['content-type']) {
           headers['Content-Type'] = 'application/json';
         }
-        fetchInit.body = JSON.stringify(callOptions.body);
+        fetchInit.body = JSON.stringify(bodyPayload);
       } else {
-        fetchInit.body = callOptions.body;
+        fetchInit.body = bodyPayload;
       }
     }
 

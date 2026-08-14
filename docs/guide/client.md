@@ -4,15 +4,23 @@ Velociradix comes with an ultra-lightweight, zero-boilerplate **Type-Safe RPC & 
 
 ---
 
-## 1. Quick Start
+## 1. Quick Start & Initialization
 
-Install and import the client in your Frontend (React, Vue, Next.js, Svelte, or Node.js):
+Install and import the client in your Frontend (React, Vue, Next.js, Svelte, or Node.js). You can initialize the client using either a string URL or a configuration object:
 
 ```typescript
 import { createClient } from 'velociradix/client';
 
-// Initialize the client pointing to your Velociradix backend
-const api = createClient('http://localhost:3000');
+// Method A: Configuration Object
+const api = createClient({
+  baseURL: 'http://localhost:3000',
+  token: 'my-jwt-token'
+});
+
+// Method B: URL string with options
+const api2 = createClient('http://localhost:3000', {
+  token: 'my-jwt-token'
+});
 ```
 
 ---
@@ -22,23 +30,29 @@ const api = createClient('http://localhost:3000');
 You can call any backend route simply by chaining path segments as properties:
 
 ```typescript
-// GET /users?page=1&limit=10
+// 1. GET /users?page=1&limit=10
 const { data, ok, status } = await api.users.get({
   query: { page: 1, limit: 10 }
 });
 
-// GET /users/123
+// 2. GET /users/123 (Path parameters)
 const { data: user } = await api.users['123'].get();
 
-// POST /api/v1/orders
-const { data: order, error } = await api.api.v1.orders.post({
+// 3. POST /items (Direct body or { body } object)
+const { data: item } = await api.items.post({
+  title: 'My Item',
+  price: 49.99
+});
+
+// Or using explicit options:
+const { data: order } = await api.api.v1.orders.post({
   body: {
     items: [{ id: 1, qty: 2 }],
     shippingAddress: '123 Main St'
   }
 });
 
-// DELETE /users/123
+// 4. DELETE /users/123
 await api.users['123'].delete();
 ```
 
@@ -49,8 +63,10 @@ await api.users['123'].delete();
 You can configure global authentication tokens, headers, timeouts, and interceptor hooks:
 
 ```typescript
-const api = createClient('https://api.myapp.com', {
-  // Global bearer token
+const api = createClient({
+  baseURL: 'https://api.myapp.com',
+
+  // Global bearer token (automatically sent as Authorization: Bearer ...)
   token: 'my-jwt-token',
 
   // Custom global headers
@@ -61,7 +77,7 @@ const api = createClient('https://api.myapp.com', {
   // Global request timeout (ms)
   timeout: 8000,
 
-  // Request & Response hooks
+  // Request & Response interceptor hooks
   onRequest: ({ url, init }) => {
     console.log(`Sending ${init.method} request to ${url}`);
   },
@@ -91,10 +107,13 @@ interface ClientResponse<T> {
 
 ### Handling Errors Cleanly:
 ```typescript
-const { data, error, ok } = await api.users.post({ body: newUser });
+const { data, error, ok } = await api.users.post({
+  name: 'Moaaz',
+  email: 'invalid-email'
+});
 
 if (!ok) {
-  alert(`Error: ${error}`);
+  console.error('Validation error from server:', error);
   return;
 }
 

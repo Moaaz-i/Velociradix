@@ -35,6 +35,10 @@ export interface ClientResponse<T = unknown> {
 }
 
 export interface ClientOptions {
+  /** Base URL of the server (e.g. 'http://localhost:3000') */
+  baseURL?: string;
+  baseUrl?: string;
+  url?: string;
   /** Custom fetch implementation */
   fetch?: typeof globalThis.fetch;
   /** Base request headers */
@@ -51,7 +55,7 @@ export interface ClientOptions {
   onResponse?: (res: ClientResponse<unknown>) => void;
 }
 
-export type ClientMethod = <T = any>(options?: ClientCallOptions) => Promise<ClientResponse<T>>;
+export type ClientMethod = <T = any>(options?: ClientCallOptions | any) => Promise<ClientResponse<T>>;
 
 export interface ClientCallable {
   get: ClientMethod;
@@ -73,9 +77,9 @@ export type ClientProxy = ClientCallable & {
 /**
  * Creates a type-safe RPC Proxy client for Velociradix
  *
- * @param baseUrl Base URL of the Velociradix API server (e.g. 'http://localhost:3000')
- * @param options Client configuration options
+ * @param baseUrlOrOptions Base URL string or client options object
+ * @param options Additional client configuration options
  */
-export function createClient<TApp = any>(baseUrl?: string, options?: ClientOptions): ClientProxy & TApp;
+export function createClient<TApp = any>(baseUrlOrOptions?: string | ClientOptions, options?: ClientOptions): ClientProxy & TApp;
 
 export default createClient;
