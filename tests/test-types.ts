@@ -77,3 +77,7 @@ const exp: ExpressApp = express();
 exp.get('/express', (req: ExpressRequest, res: ExpressResponse) => {
   res.status(200).send('express ok');
 });
+
+customApp.autoRoute('./routes');
+const routePromise: Promise<App> = customApp.autoRouteAsync('./routes', '/api');
+

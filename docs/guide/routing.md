@@ -116,7 +116,7 @@ For static responses, cached data, or health endpoints where JS overhead is unne
 
 ```javascript
 // Answered entirely in C++ without touching V8 JavaScript thread
-app.fastGet('/health', { status: 'healthy', version: '7.2.0' });
+app.fastGet('/health', { status: 'healthy', version: '7.3.0' });
 app.fastRoute('GET', '/robots.txt', 'User-agent: *\nDisallow: /admin', 200, {
   'Content-Type': 'text/plain'
 });

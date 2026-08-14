@@ -22,6 +22,7 @@ export default defineConfig({
           { text: 'Introduction & Setup', link: '/guide/getting-started' },
           { text: 'Features Overview', link: '/guide/features' },
           { text: 'Routing & Path Params', link: '/guide/routing' },
+          { text: 'File-Based Routing (autoRoute)', link: '/guide/file-based-routing' },
           { text: 'Clustering & Scaling', link: '/guide/cluster' },
           { text: 'Performance & Benchmarks', link: '/guide/benchmarks' },
         ],

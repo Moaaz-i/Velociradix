@@ -858,8 +858,11 @@ export interface App {
   /** Scales application workers across CPU cluster cores */
   cluster(options?: { workers?: number }): App;
 
-  /** File-system based automatic route registration */
-  autoRoute(dirPath: string): App;
+  /** File-system based automatic route registration (supports [id] params, [...slug] wildcards, and route middlewares) */
+  autoRoute(dirPath: string, basePrefix?: string): App;
+
+  /** Asynchronous file-system based automatic route registration that returns a Promise */
+  autoRouteAsync(dirPath: string, basePrefix?: string): Promise<App>;
 
   /** Registers a WebSocket upgrade route listener */
   ws(path: string, handler?: (socket: { send: (msg: string) => void; broadcast: (msg: string) => void; close: () => void }, ctx: Context) => void): App;
