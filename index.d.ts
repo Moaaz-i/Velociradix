@@ -1,4 +1,6 @@
+/// <reference types="node" />
 import type { Readable } from 'node:stream';
+import type { Socket } from 'node:net';
 
 /** Primitive JSON-compatible data types */
 export type JsonPrimitive = string | number | boolean | null | undefined;
@@ -517,10 +519,10 @@ export interface Request {
   readonly httpVersion: string;
   /** Request start high-resolution timestamp */
   readonly _startTime?: [number, number] | number;
-  /** Low-level socket reference placeholder */
-  readonly socket?: unknown;
-  /** Low-level connection reference placeholder */
-  readonly connection?: unknown;
+  /** Low-level socket reference */
+  readonly socket?: Socket;
+  /** Low-level connection reference */
+  readonly connection?: Socket;
   /** Get header value by case-insensitive name */
   get(name: string): string | undefined;
   /** Get header value by case-insensitive name (alias) */
@@ -734,6 +736,7 @@ export type Handler = (ctx: Context) => Promise<JsonValue | Response | Uint8Arra
 
 /** Route Group interface created via `app.group()` */
 export interface RouteGroup {
+  use(mw: Middleware): RouteGroup;
   get(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   post(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   put(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
@@ -744,6 +747,7 @@ export interface RouteGroup {
   options(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   all(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   group(prefix: string, cb: (group: RouteGroup) => void): RouteGroup;
+  group(prefix: string, middlewares: Middleware[] | Middleware, cb: (group: RouteGroup) => void): RouteGroup;
 }
 
 /** Velociradix Application instance interface */
@@ -822,6 +826,7 @@ export interface App {
 
   /** Groups routes under a common URL path prefix */
   group(prefix: string, cb: (group: RouteGroup) => void): App;
+  group(prefix: string, middlewares: Middleware[] | Middleware, cb: (group: RouteGroup) => void): App;
 
   /** Enables CORS middleware with custom options */
   enableCors(options?: CorsOptions): App;

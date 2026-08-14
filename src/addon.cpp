@@ -165,6 +165,7 @@ static void read_map(napi_env env, napi_value obj,
     uint32_t count = 0;
     if (napi_get_property_names(env, obj, &names) != napi_ok) return;
     if (napi_get_array_length(env, names, &count) != napi_ok) return;
+    out.reserve(out.size() + count);
     for (uint32_t i = 0; i < count; ++i) {
         napi_value k, v;
         if (napi_get_element(env, names, i, &k) != napi_ok) continue;

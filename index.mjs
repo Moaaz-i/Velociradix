@@ -633,56 +633,59 @@ function cookieParse(h) {
   return out;
 }
 
-function runChain(mws, handler, ctx) {
-  const n = mws.length;
+function runChain(chain, handler, ctx) {
+  const n = chain.length;
   if (n === 0) return handler(ctx);
+  if (n === 1) return chain[0](ctx, () => handler(ctx));
   let i = 0;
-  const next = () => (i < n ? mws[i++](ctx, next) : handler(ctx));
+  const next = () => (i < n ? chain[i++](ctx, next) : handler(ctx));
   return next();
 }
 
 function respondRes(ctx, status, body) {
-  const resList = ctx._expressResList || (ctx._expressRes ? [ctx._expressRes] : []);
-  for (let i = 0; i < resList.length; i++) {
-    const res = resList[i];
-    if (res.finished) continue;
+  if (ctx._expressResList || ctx._expressRes) {
+    const resList = ctx._expressResList || [ctx._expressRes];
+    for (let i = 0; i < resList.length; i++) {
+      const res = resList[i];
+      if (!res || res.finished) continue;
 
-    res.statusCode = status;
+      res.statusCode = status;
 
-    if (ctx._headers) {
-      for (const k in ctx._headers) {
-        const lck = String(k).toLowerCase();
-        if (!res.hasHeader(lck)) {
-          res.setHeader(lck, ctx._headers[k]);
+      if (ctx._headers) {
+        for (const k in ctx._headers) {
+          const lck = String(k).toLowerCase();
+          if (!res.hasHeader(lck)) {
+            res.setHeader(lck, ctx._headers[k]);
+          }
         }
       }
-    }
 
-    if (!res.hasHeader('content-length') && body !== undefined && body !== null) {
-      let len;
-      if (typeof body === 'string') {
-        len = Buffer.byteLength(body);
-      } else if (body instanceof Uint8Array || Buffer.isBuffer(body)) {
-        len = body.byteLength || body.length;
+      if (!res.hasHeader('content-length') && body !== undefined && body !== null) {
+        let len;
+        if (typeof body === 'string') {
+          len = Buffer.byteLength(body);
+        } else if (body instanceof Uint8Array || Buffer.isBuffer(body)) {
+          len = body.byteLength || body.length;
+        }
+        if (len !== undefined) {
+          res.setHeader('Content-Length', String(len));
+        }
       }
-      if (len !== undefined) {
-        res.setHeader('Content-Length', String(len));
+
+      if (typeof res.writeHead === 'function') {
+        try {
+          res.writeHead(status);
+        } catch {}
       }
+
+      res.headersSent = true;
+      res._header = true;
+      res.finished = true;
+      res.writableEnded = true;
+
+      res.emit('finish');
+      res.emit('close');
     }
-
-    if (typeof res.writeHead === 'function') {
-      try {
-        res.writeHead(status);
-      } catch {}
-    }
-
-    res.headersSent = true;
-    res._header = true;
-    res.finished = true;
-    res.writableEnded = true;
-
-    res.emit('finish');
-    res.emit('close');
   }
   native.respond(ctx._ptr, status, ctx._headers, body);
 }
@@ -1505,7 +1508,13 @@ function createApp() {
       HTTP_METHODS.forEach((m) => registerRoute(m, path, handler, options));
       return app;
     },
-    use(mw) { mws.push(mw); return app; },
+    use(mw) {
+      mws.push(mw);
+      for (let i = 1; i < routes.length; i++) {
+        if (routes[i]) routes[i].cachedChain = null;
+      }
+      return app;
+    },
     useExpress(fn) {
       return app.use((ctx, next) => {
         const req = ctx.req;
@@ -1856,18 +1865,35 @@ function createApp() {
         return app.useExpress(router)(ctx, next);
       });
     },
-    group(prefix, cb) {
-      const createGroup = (p) => {
+    group(prefix, maybeMwsOrCb, maybeCb) {
+      const groupMws = Array.isArray(maybeMwsOrCb) ? maybeMwsOrCb : (typeof maybeMwsOrCb === 'function' && maybeCb ? [maybeMwsOrCb] : []);
+      const cb = typeof maybeMwsOrCb === 'function' && !maybeCb ? maybeMwsOrCb : maybeCb;
+      const createGroup = (p, inheritedMws = []) => {
+        const localMws = [...inheritedMws];
         const g = {
-          group: (pp, innerCb) => innerCb(createGroup(p + pp)),
-          all: (pp, h2, o) => app.all(p + pp, h2, o),
+          use: (mw) => { localMws.push(mw); return g; },
+          group: (pp, innerMwsOrCb, innerCb) => {
+            const innerMws = Array.isArray(innerMwsOrCb) ? innerMwsOrCb : (typeof innerMwsOrCb === 'function' && innerCb ? [innerMwsOrCb] : []);
+            const callback = typeof innerMwsOrCb === 'function' && !innerCb ? innerMwsOrCb : innerCb;
+            const subGroup = createGroup(p + pp, [...localMws, ...innerMws]);
+            if (callback) callback(subGroup);
+            return g;
+          },
+          all: (pp, h2, o = {}) => {
+            const combinedMws = [...localMws, ...(o.middlewares || [])];
+            return app.all(p + pp, h2, { ...o, middlewares: combinedMws });
+          },
         };
         HTTP_METHODS.forEach((m) => {
-          g[m] = (pp, h2, o) => app[m](p + pp, h2, o);
+          g[m] = (pp, h2, o = {}) => {
+            const combinedMws = [...localMws, ...(o.middlewares || [])];
+            return app[m](p + pp, h2, { ...o, middlewares: combinedMws });
+          };
         });
         return g;
       };
-      cb(createGroup(prefix));
+      const grp = createGroup(prefix, groupMws);
+      if (cb) cb(grp);
       return app;
     },
     redirectRoute(fromPath, toPath, status = 302) {
@@ -1983,7 +2009,7 @@ function createApp() {
     },
     metricsUI(dashPath = '/velociradix/metrics') {
       app.get(dashPath, (ctx) => {
-        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Velociradix Live Metrics</title><style>:root{--bg:#090d16;--card:#121827;--text:#f3f4f6;--muted:#9ca3af;}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:2rem;}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;border-bottom:1px solid #1f2937;padding-bottom:1rem;}.title{font-size:1.5rem;font-weight:700;color:#60a5fa;display:flex;align-items:center;gap:0.5rem;}.badge{background:#1e3a8a;color:#93c5fd;font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-bottom:2rem;}.card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);}.card-title{font-size:0.875rem;color:var(--muted);margin-bottom:0.5rem;}.card-val{font-size:2rem;font-weight:700;color:#38bdf8;}.table-card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;}table{width:100%;border-collapse:collapse;margin-top:1rem;}th,td{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #1f2937;font-size:0.875rem;}th{color:var(--muted);}</style></head><body><div class="header"><div class="title">⚡ Velociradix Metrics & Health Engine <span class="badge">v7.1.0</span></div><div style="color:#4ade80;font-weight:600;">● Live Engine Active</div></div><div class="grid"><div class="card"><div class="card-title">System Uptime</div><div class="card-val" id="uptime">0s</div></div><div class="card"><div class="card-title">Memory Heap Used</div><div class="card-val" id="heap">0 MB</div></div><div class="card"><div class="card-title">Total Registered Routes</div><div class="card-val" id="routesCount">0</div></div><div class="card"><div class="card-title">Event Loop Engine</div><div class="card-val" style="color:#a78bfa;">Native C++</div></div></div><div class="table-card"><h3 style="margin-top:0;">Registered Routes Overview</h3><table id="routesTable"><thead><tr><th>Method</th><th>Path</th></tr></thead><tbody></tbody></table></div><script>async function update(){try{const res=await fetch(location.pathname+'/json');const data=await res.json();document.getElementById('uptime').innerText=Math.floor(data.uptime)+'s';document.getElementById('heap').innerText=(data.memory.heapUsed/1024/1024).toFixed(2)+' MB';document.getElementById('routesCount').innerText=data.routes.length;document.querySelector('#routesTable tbody').innerHTML=data.routes.map(r=>\`<tr><td style="color:#60a5fa;font-weight:bold;">\${r.method}</td><td>\${r.path}</td></tr>\`).join('');}catch{}}update();setInterval(update,2000);</script></body></html>`;
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Velociradix Live Metrics</title><style>:root{--bg:#090d16;--card:#121827;--text:#f3f4f6;--muted:#9ca3af;}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:2rem;}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;border-bottom:1px solid #1f2937;padding-bottom:1rem;}.title{font-size:1.5rem;font-weight:700;color:#60a5fa;display:flex;align-items:center;gap:0.5rem;}.badge{background:#1e3a8a;color:#93c5fd;font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-bottom:2rem;}.card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);}.card-title{font-size:0.875rem;color:var(--muted);margin-bottom:0.5rem;}.card-val{font-size:2rem;font-weight:700;color:#38bdf8;}.table-card{background:var(--card);border:1px solid #1f2937;border-radius:8px;padding:1.5rem;}table{width:100%;border-collapse:collapse;margin-top:1rem;}th,td{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #1f2937;font-size:0.875rem;}th{color:var(--muted);}</style></head><body><div class="header"><div class="title">⚡ Velociradix Metrics & Health Engine <span class="badge">v7.2.0</span></div><div style="color:#4ade80;font-weight:600;">● Live Engine Active</div></div><div class="grid"><div class="card"><div class="card-title">System Uptime</div><div class="card-val" id="uptime">0s</div></div><div class="card"><div class="card-title">Memory Heap Used</div><div class="card-val" id="heap">0 MB</div></div><div class="card"><div class="card-title">Total Registered Routes</div><div class="card-val" id="routesCount">0</div></div><div class="card"><div class="card-title">Event Loop Engine</div><div class="card-val" style="color:#a78bfa;">Native C++</div></div></div><div class="table-card"><h3 style="margin-top:0;">Registered Routes Overview</h3><table id="routesTable"><thead><tr><th>Method</th><th>Path</th></tr></thead><tbody></tbody></table></div><script>async function update(){try{const res=await fetch(location.pathname+'/json');const data=await res.json();document.getElementById('uptime').innerText=Math.floor(data.uptime)+'s';document.getElementById('heap').innerText=(data.memory.heapUsed/1024/1024).toFixed(2)+' MB';document.getElementById('routesCount').innerText=data.routes.length;document.querySelector('#routesTable tbody').innerHTML=data.routes.map(r=>\`<tr><td style="color:#60a5fa;font-weight:bold;">\${r.method}</td><td>\${r.path}</td></tr>\`).join('');}catch{}}update();setInterval(update,2000);</script></body></html>`;
         return ctx.html(html);
       });
       app.get(`${dashPath}/json`, (ctx) => {
@@ -2224,13 +2250,13 @@ function createApp() {
   const dispatch = (routeId, ptr) => {
     const entry = routes[routeId];
     const ctx = acquireContext(ptr, app);
-    emitter.emit('request', ctx);
+    if (emitter.listenerCount('request') > 0) emitter.emit('request', ctx);
     let result;
     try {
       if (mws.length === 0 && entry.mws.length === 0) {
         result = entry.handler(ctx);
       } else {
-        const chain = mws.length === 0 ? entry.mws : (entry.mws.length === 0 ? mws : [...mws, ...entry.mws]);
+        const chain = entry.cachedChain ??= (mws.length === 0 ? entry.mws : (entry.mws.length === 0 ? mws : [...mws, ...entry.mws]));
         result = runChain(chain, entry.handler, ctx);
       }
     } catch (err) {
@@ -2245,7 +2271,7 @@ function createApp() {
     if (result && typeof result.then === 'function') {
       result.then((v) => {
         if (!ctx.done) {
-          emitter.emit('response', ctx);
+          if (emitter.listenerCount('response') > 0) emitter.emit('response', ctx);
           if (v === undefined) respondRes(ctx, ctx.statusCode, '');
           else respondValue(ctx, ctx.statusCode, v);
         }
@@ -2262,7 +2288,7 @@ function createApp() {
       });
     } else {
       if (!ctx.done) {
-        emitter.emit('response', ctx);
+        if (emitter.listenerCount('response') > 0) emitter.emit('response', ctx);
         if (result === undefined) respondRes(ctx, ctx.statusCode, '');
         else respondValue(ctx, ctx.statusCode, result);
       }

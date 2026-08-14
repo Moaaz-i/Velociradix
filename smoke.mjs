@@ -149,6 +149,10 @@ app
     return { bridge: "working", isReqGet: Boolean(ctx.req.get), time: ctx.req._startTime };
   })
   .group("/api", (g) => {
+    g.use((ctx, next) => {
+      ctx.set("X-Group-Scoped", "active");
+      return next();
+    });
     g.get("/users/:id", (ctx) => ({ user: ctx.params.id }));
   })
   .listen(8899, async () => {
@@ -232,6 +236,9 @@ async function run() {
   console.log("GET /api/users/123 ->", userRes.status, userRes.text);
   if (!userRes.text.includes('"user":"123"')) {
     throw new Error(`Params test failed! Expected "123", got: ${userRes.text}`);
+  }
+  if (userRes.headers.get("x-group-scoped") !== "active") {
+    throw new Error(`Group middleware failed! Expected X-Group-Scoped header to be "active"`);
   }
 
   // C++ Fast-Path Response test

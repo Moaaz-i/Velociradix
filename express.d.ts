@@ -1,14 +1,16 @@
+/// <reference types="node" />
 import type { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
 
 /** Express Request Interface */
-export interface ExpressRequest {
+export interface ExpressRequest<Body = Record<string, unknown>, Params = Record<string, string>, Query = Record<string, string | string[] | undefined>> {
   method: string;
   url: string;
   originalUrl: string;
   path: string;
-  query: Record<string, string | string[] | undefined>;
-  params: Record<string, string>;
-  body: unknown;
+  query: Query;
+  params: Params;
+  body: Body;
   headers: Record<string, string | string[] | undefined>;
   rawHeaders: string[];
   ip: string;
@@ -17,6 +19,8 @@ export interface ExpressRequest {
   secure: boolean;
   xhr: boolean;
   httpVersion: string;
+  socket?: Socket;
+  connection?: Socket;
   cookies?: Record<string, string>;
   signedCookies?: Record<string, string>;
   get(name: string): string | undefined;
@@ -34,10 +38,10 @@ export interface ExpressResponse extends EventEmitter {
 
   status(code: number): this;
   sendStatus(code: number): this;
-  send(body?: string | Buffer | Uint8Array | object | unknown): this;
-  json(body?: object | Array<unknown> | string | number | boolean | unknown): this;
+  send(body?: string | Buffer | Uint8Array | Record<string, unknown> | Array<unknown> | number | boolean | null): this;
+  json(body?: Record<string, unknown> | Array<unknown> | string | number | boolean | null): this;
   html(htmlString: string): this;
-  sendFile(filepath: string, options?: Record<string, unknown>, callback?: (err?: Error) => void): this;
+  sendFile(filepath: string, options?: Record<string, unknown>, callback?: (err?: Error | null) => void): this;
   redirect(url: string, status?: number): this;
   setHeader(key: string, value: string | number | string[]): this;
   getHeader(key: string): string | number | string[] | undefined;
@@ -52,7 +56,7 @@ export interface ExpressResponse extends EventEmitter {
   location(url: string): this;
   type(type: string): this;
   contentType(type: string): this;
-  end(chunk?: string | Buffer | Uint8Array | unknown, encoding?: string, cb?: () => void): this;
+  end(chunk?: string | Buffer | Uint8Array | null, encoding?: string, cb?: () => void): this;
   on(event: string, listener: (...args: unknown[]) => void): this;
   once(event: string, listener: (...args: unknown[]) => void): this;
   emit(event: string, ...args: unknown[]): boolean;

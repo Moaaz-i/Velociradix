@@ -22,13 +22,14 @@ export default defineConfig({
           { text: 'Introduction & Setup', link: '/guide/getting-started' },
           { text: 'Features Overview', link: '/guide/features' },
           { text: 'Routing & Path Params', link: '/guide/routing' },
+          { text: 'Clustering & Scaling', link: '/guide/cluster' },
           { text: 'Performance & Benchmarks', link: '/guide/benchmarks' },
         ],
       },
       {
         text: '⚙️ Middlewares & Validation',
         items: [
-          { text: '20+ Built-in Middlewares', link: '/guide/middlewares' },
+          { text: '36+ Built-in Middlewares', link: '/guide/middlewares' },
           { text: 'Building Custom Middlewares', link: '/guide/custom-middlewares' },
           { text: 'Schema & Zod Validation', link: '/guide/validation' },
           { text: 'Express Middleware Shim', link: '/guide/express-compat' },
