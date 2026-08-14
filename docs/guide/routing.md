@@ -122,8 +122,42 @@ For static responses, cached data, or health endpoints where JS overhead is unne
 
 ```javascript
 // Answered entirely in C++ without touching V8 JavaScript thread
-app.fastGet('/health', { status: 'healthy', version: '7.4.0' });
+app.fastGet('/health', { status: 'healthy', version: '7.5.3' });
 app.fastRoute('GET', '/robots.txt', 'User-agent: *\nDisallow: /admin', 200, {
   'Content-Type': 'text/plain'
+});
+```
+
+---
+
+## 7. API Versioning (`app.version`)
+
+Create cleanly versioned API endpoints with scoped middlewares:
+
+```javascript
+// Version 1
+app.version('v1', (v1) => {
+  v1.get('/users', (ctx) => [{ id: 1, name: 'John' }]);
+});
+
+// Version 2 (with new structure)
+app.version('v2', (v2) => {
+  v2.get('/users', (ctx) => ({ data: [{ id: 1, name: 'John' }], count: 1 }));
+});
+```
+
+---
+
+## 8. Subdomain Routing (`app.subdomain`)
+
+Group routes designated for specific subdomains:
+
+```javascript
+app.subdomain('admin', (admin) => {
+  admin.get('/dashboard', (ctx) => ctx.json({ admin: true }));
+});
+
+app.subdomain('api', (api) => {
+  api.get('/v1/status', (ctx) => ctx.json({ status: 'online' }));
 });
 ```

@@ -121,4 +121,34 @@ class ItemController {
 customApp.registerController(ItemController);
 registerController(customApp, ItemController);
 
+// Inject test
+const injectPromise = customApp.inject({ method: 'GET', url: '/test' });
+injectPromise.then((res) => {
+  const code: number = res.statusCode;
+  const ok: boolean = res.ok;
+  const txt: string = res.text();
+});
+
+// Versioning and context helpers test
+customApp.version('v1', (v1) => {
+  v1.get('/info', (ctx) => {
+    ctx.download('./file.pdf', 'file.pdf');
+    ctx.attachment('file.pdf');
+    return ctx.format({
+      json: { ok: true },
+      html: '<h1>OK</h1>',
+      text: 'OK'
+    });
+  });
+});
+
+customApp.subdomain('api', (apiGroup) => {
+  apiGroup.post('/upload', async (ctx) => {
+    const data = await ctx.formData();
+    const f = await ctx.file('avatar');
+    return { ok: true };
+  });
+});
+
+
 

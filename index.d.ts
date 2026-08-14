@@ -744,6 +744,63 @@ export interface Context extends Response {
 
   /** Automatically streams periodic SSE payloads at configured time interval */
   sseInterval(fn: (ctx: Context) => JsonValue | Promise<JsonValue>, intervalMs?: number): this;
+
+  /** Initiates file download by setting Content-Disposition attachment header */
+  download(filepath: string, filename?: string, opts?: SendFileOptions): this;
+
+  /** Sets Content-Disposition to attachment with optional filename */
+  attachment(filename?: string): this;
+
+  /** Performs content-negotiation based on incoming Accept header */
+  format(handlers: {
+    json?: (() => unknown) | unknown;
+    html?: (() => string) | string;
+    text?: (() => string) | string;
+    default?: (() => unknown) | unknown;
+  }): unknown;
+
+  /** Parses multipart/form-data request body extracting fields and files */
+  formData(options?: FormDataOptions): Promise<FormDataResult>;
+
+  /** Extracts uploaded file from multipart/form-data */
+  file(fieldName: string, options?: FormDataOptions): Promise<UploadedFile | UploadedFile[] | null>;
+}
+
+export interface UploadedFile {
+  fieldname: string;
+  filename: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+  filepath: string | null;
+}
+
+export interface FormDataResult {
+  fields: Record<string, string | string[]>;
+  files: Record<string, UploadedFile | UploadedFile[]>;
+}
+
+export interface FormDataOptions {
+  uploadDir?: string;
+  maxFileSize?: number;
+}
+
+export interface InjectOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS' | string;
+  url?: string;
+  headers?: Record<string, string>;
+  query?: Record<string, string | number | boolean>;
+  body?: unknown;
+}
+
+export interface InjectResponse {
+  statusCode: number;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  text(): string;
+  json<T = any>(): T;
+  ok: boolean;
 }
 
 /** Next function callback in middleware chain */
@@ -926,6 +983,17 @@ export interface App {
   /** Registers a decorated Controller class onto the application router */
   registerController(ControllerClass: any, ...constructorArgs: any[]): App;
 
+  /** Simulates in-memory HTTP request execution without opening network sockets */
+  inject(options?: InjectOptions | string): Promise<InjectResponse>;
+
+  /** Creates an API version route group (e.g. 'v1' -> '/v1') */
+  version(v: string, cb: (group: RouteGroup) => void): App;
+  version(v: string, middlewares: Middleware[] | Middleware, cb: (group: RouteGroup) => void): App;
+
+  /** Creates a subdomain-scoped route group */
+  subdomain(sub: string, cb: (group: RouteGroup) => void): App;
+  subdomain(sub: string, middlewares: Middleware[] | Middleware, cb: (group: RouteGroup) => void): App;
+
   /** Sets maximum request body payload limit in bytes */
   setPayloadLimit(n: number): App;
   /** Sets number of C++ worker threads for multithreaded event loop */
@@ -1060,6 +1128,7 @@ export interface VelociradixFactory {
   (): App;
   app: App;
   createApp: typeof createApp;
+  createEventBus: typeof createEventBus;
   jwtSign: typeof jwtSign;
   jwtVerify: typeof jwtVerify;
   encryptValue: typeof encryptValue;

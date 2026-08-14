@@ -53,7 +53,7 @@ const packageJson = {
     dev: isTs ? 'tsc --watch' : 'node --watch index.mjs'
   },
   dependencies: {
-    velociradix: '^6.3.0'
+    velociradix: '^7.5.2'
   },
   devDependencies: isTs ? {
     typescript: '^5.0.0',
@@ -74,6 +74,7 @@ if (isTs) {
       rootDir: './src',
       strict: true,
       esModuleInterop: true,
+      experimentalDecorators: true,
       skipLibCheck: true
     },
     include: ['src/**/*']

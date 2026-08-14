@@ -5,9 +5,9 @@ import {
   randomBytes,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from 'node:module';
-import { extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -544,6 +544,57 @@ class Context {
     this.setHeader('Content-Length', stat.size);
     const data = readFileSync(fullPath);
     return this.send(data);
+  }
+  download(filepath, filename, opts = {}) {
+    const fullPath = resolve(filepath);
+    const name = filename || basename(fullPath);
+    this.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
+    return this.sendFile(fullPath, opts);
+  }
+  attachment(filename) {
+    if (filename) {
+      this.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    } else {
+      this.setHeader('Content-Disposition', 'attachment');
+    }
+    return this;
+  }
+  format(handlers = {}) {
+    const accept = this.get('accept') || '';
+    if (handlers.json && (accept.includes('application/json') || accept.includes('*/*') || !accept)) {
+      this.setHeader('Content-Type', 'application/json');
+      const val = typeof handlers.json === 'function' ? handlers.json() : handlers.json;
+      return this.json(val);
+    }
+    if (handlers.html && (accept.includes('text/html') || accept.includes('html'))) {
+      this.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const val = typeof handlers.html === 'function' ? handlers.html() : handlers.html;
+      return this.html(val);
+    }
+    if (handlers.text && (accept.includes('text/plain') || accept.includes('text'))) {
+      this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      const val = typeof handlers.text === 'function' ? handlers.text() : handlers.text;
+      return this.send(val);
+    }
+    if (handlers.default) {
+      const val = typeof handlers.default === 'function' ? handlers.default() : handlers.default;
+      return typeof val === 'object' && val !== null ? this.json(val) : this.send(val);
+    }
+    return this.status(406).send('Not Acceptable');
+  }
+  async formData(options = {}) {
+    const ct = this.get('content-type') || '';
+    const match = ct.match(/boundary=(?:["']?)([^"';\s]+)(?:["']?)/i);
+    if (!match) {
+      throw new BadRequestError('Invalid or missing multipart boundary');
+    }
+    const boundary = match[1];
+    const rawBody = this.req.body ? Buffer.from(this.req.body, 'binary') : Buffer.alloc(0);
+    return parseMultipartBuffer(rawBody, boundary, options);
+  }
+  async file(fieldName, options = {}) {
+    const data = await this.formData(options);
+    return data.files[fieldName] || null;
   }
   compress() {
     if (this.done || !this._headers) return this;
@@ -1651,6 +1702,100 @@ function createEventBus(options = {}) {
   return bus;
 }
 
+function parseMultipartBuffer(bodyBuffer, boundary, options = {}) {
+  const boundaryDelimiter = `--${boundary}`;
+  const str = bodyBuffer.toString('binary');
+  const parts = str.split(boundaryDelimiter);
+  const fields = {};
+  const files = {};
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    if (part.trim() === '--' || part.startsWith('--')) continue;
+
+    const headerEndIdx = part.indexOf('\r\n\r\n');
+    if (headerEndIdx === -1) continue;
+
+    const headerStr = part.slice(0, headerEndIdx);
+    const bodyStr = part.slice(headerEndIdx + 4, part.lastIndexOf('\r\n'));
+
+    const dispMatch = headerStr.match(/Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]+)")?/i);
+    if (!dispMatch) continue;
+
+    const fieldName = dispMatch[1];
+    const fileName = dispMatch[2];
+
+    if (fileName !== undefined) {
+      const ctMatch = headerStr.match(/Content-Type:\s*([^\r\n;]+)/i);
+      const mimeType = ctMatch ? ctMatch[1].trim() : 'application/octet-stream';
+      const fileBuffer = Buffer.from(bodyStr, 'binary');
+
+      const uploadedFile = {
+        fieldname: fieldName,
+        filename: fileName,
+        mimetype: mimeType,
+        size: fileBuffer.length,
+        buffer: fileBuffer,
+        filepath: null
+      };
+
+      if (options.uploadDir) {
+        if (!existsSync(options.uploadDir)) {
+          mkdirSync(options.uploadDir, { recursive: true });
+        }
+        const safeName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const targetPath = join(options.uploadDir, safeName);
+        writeFileSync(targetPath, fileBuffer);
+        uploadedFile.filepath = targetPath;
+      }
+
+      if (files[fieldName]) {
+        if (Array.isArray(files[fieldName])) files[fieldName].push(uploadedFile);
+        else files[fieldName] = [files[fieldName], uploadedFile];
+      } else {
+        files[fieldName] = uploadedFile;
+      }
+    } else {
+      const fieldValue = Buffer.from(bodyStr, 'binary').toString('utf8');
+      if (fields[fieldName]) {
+        if (Array.isArray(fields[fieldName])) fields[fieldName].push(fieldValue);
+        else fields[fieldName] = [fields[fieldName], fieldValue];
+      } else {
+        fields[fieldName] = fieldValue;
+      }
+    }
+  }
+
+  return { fields, files };
+}
+
+function matchRoutePath(routePattern, requestPath) {
+  if (routePattern === requestPath) return { match: true, params: {} };
+  if (routePattern === '/*' || routePattern === '*') return { match: true, params: { wildcard: requestPath } };
+
+  const rParts = routePattern.split('/').filter(Boolean);
+  const pParts = requestPath.split('/').filter(Boolean);
+
+  if (rParts.length !== pParts.length && !routePattern.endsWith('/*') && !routePattern.endsWith('*')) {
+    return { match: false, params: {} };
+  }
+
+  const params = {};
+  for (let i = 0; i < rParts.length; i++) {
+    const rp = rParts[i];
+    if (rp === '*' || rp === '/*') {
+      params['wildcard'] = pParts.slice(i).join('/');
+      return { match: true, params };
+    }
+    if (rp.startsWith(':')) {
+      params[rp.slice(1)] = pParts[i] || '';
+      continue;
+    }
+    if (rp !== pParts[i]) return { match: false, params: {} };
+  }
+  return { match: pParts.length === rParts.length, params };
+}
+
 function createApp() {
   const h = native.createApp();
   const mws = [];
@@ -2594,6 +2739,180 @@ function createApp() {
         attachRoutes(app);
       }
       return app;
+    },
+    version(v, ...args) {
+      const verPrefix = v.startsWith('/') ? v : `/${v}`;
+      return app.group(verPrefix, ...args);
+    },
+    subdomain(sub, ...args) {
+      const subPrefix = `/${sub}`;
+      return app.group(subPrefix, ...args);
+    },
+    async inject(optsOrUrl) {
+      const opts = typeof optsOrUrl === 'string' ? { url: optsOrUrl } : (optsOrUrl || {});
+      const method = (opts.method || 'GET').toUpperCase();
+      let rawUrl = opts.url || '/';
+      const [path, qs] = rawUrl.split('?');
+      const headers = { ...(opts.headers || {}) };
+      let bodyStr = '';
+      if (opts.body !== undefined && opts.body !== null) {
+        if (typeof opts.body === 'object' && !(opts.body instanceof Buffer)) {
+          headers['content-type'] = headers['content-type'] || 'application/json';
+          bodyStr = JSON.stringify(opts.body);
+        } else {
+          bodyStr = String(opts.body);
+        }
+      }
+
+      let matchedParams = {};
+      let matchedEntry = null;
+
+      for (let i = 1; i < routes.length; i++) {
+        const meta = routeMeta[i - 1];
+        if (!meta) continue;
+        if (meta.method === method || meta.method === 'ALL') {
+          const res = matchRoutePath(meta.path, path);
+          if (res.match) {
+            matchedParams = res.params;
+            matchedEntry = routes[i];
+            break;
+          }
+        }
+      }
+
+      const resHeaders = {};
+      let resStatus = 200;
+      let resBody = '';
+
+      if (!matchedEntry) {
+        return {
+          statusCode: 404,
+          status: 404,
+          headers: { 'content-type': 'text/plain' },
+          body: 'Not Found',
+          text: () => 'Not Found',
+          json: () => { throw new Error('Cannot parse 404 response as JSON'); },
+          ok: false
+        };
+      }
+
+      const mockReq = {
+        method,
+        url: rawUrl,
+        path,
+        query: qs || '',
+        headers,
+        body: bodyStr,
+        params: matchedParams
+      };
+
+      const mockCtx = Object.create(Context.prototype);
+      Object.assign(mockCtx, {
+        _req: mockReq,
+        _app: app,
+        _headers: headers,
+        _params: matchedParams,
+        _query: qs || '',
+        _body: bodyStr,
+        _state: {},
+        statusCode: 200,
+        done: false,
+        valid: {},
+        validBody: undefined,
+        validQuery: undefined,
+        validParams: undefined,
+        setHeader(k, v) { resHeaders[k.toLowerCase()] = String(v); return this; },
+        set(k, v) {
+          if (typeof k === 'object' && k !== null) {
+            for (const key in k) resHeaders[key.toLowerCase()] = String(k[key]);
+          } else {
+            resHeaders[k.toLowerCase()] = String(v);
+          }
+          return this;
+        },
+        header(k, v) { return this.setHeader(k, v); },
+        get(k) { return headers[k.toLowerCase()]; },
+        status(c) { resStatus = c; this.statusCode = c; return this; },
+        send(b) {
+          resBody = typeof b === 'object' && b !== null ? JSON.stringify(b) : String(b ?? '');
+          this.done = true;
+          return this;
+        },
+        json(obj) {
+          resHeaders['content-type'] = 'application/json';
+          resBody = JSON.stringify(obj);
+          this.done = true;
+          return this;
+        },
+        html(str) {
+          resHeaders['content-type'] = 'text/html; charset=utf-8';
+          resBody = String(str);
+          this.done = true;
+          return this;
+        },
+        body() {
+          if (!bodyStr) return Promise.resolve({});
+          try { return Promise.resolve(JSON.parse(bodyStr)); } catch { return Promise.resolve({}); }
+        },
+        validate(schema) {
+          if (!schema) return true;
+          if (schema.body || schema.query || schema.params || schema.headers) {
+            if (schema.body) {
+              const b = mockCtx.body ? JSON.parse(bodyStr || '{}') : {};
+              mockCtx.validBody = validateSchemaTarget(b, schema.body, 'body');
+            }
+            if (schema.query) {
+              const q = queryParse(qs || '');
+              mockCtx.validQuery = validateSchemaTarget(q, schema.query, 'query');
+            }
+            if (schema.params) {
+              mockCtx.validParams = validateSchemaTarget(matchedParams, schema.params, 'params');
+            }
+          } else {
+            const b = mockCtx.body ? JSON.parse(bodyStr || '{}') : {};
+            mockCtx.validBody = validateSchemaTarget(b, schema, 'body');
+          }
+          mockCtx.valid = { body: mockCtx.validBody, query: mockCtx.validQuery, params: mockCtx.validParams };
+          return true;
+        }
+      });
+
+      const chain = matchedEntry.mws && matchedEntry.mws.length > 0
+        ? (mws.length === 0 ? matchedEntry.mws : [...mws, ...matchedEntry.mws])
+        : mws;
+
+      let result;
+      try {
+        if (chain.length === 0) {
+          result = await matchedEntry.handler(mockCtx);
+        } else {
+          result = await runChain(chain, matchedEntry.handler, mockCtx);
+        }
+      } catch (err) {
+        resStatus = err instanceof HttpError ? err.status : (err.status || 500);
+        resHeaders['content-type'] = 'application/json';
+        resBody = JSON.stringify({ error: err.message, details: err.details });
+        mockCtx.done = true;
+      }
+
+      if (!mockCtx.done && result !== undefined) {
+        if (typeof result === 'object' && result !== null) {
+          resHeaders['content-type'] = 'application/json';
+          resBody = JSON.stringify(result);
+        } else {
+          resBody = String(result);
+        }
+      }
+
+      return {
+        statusCode: resStatus,
+        status: resStatus,
+        headers: resHeaders,
+        body: resBody,
+        text: () => resBody,
+        json: () => JSON.parse(resBody),
+        ok: resStatus >= 200 && resStatus < 300
+      };
     },
     setPayloadLimit(n) { native.setPayloadLimit(h, n); return app; },
     setWorkers(n) { native.setWorkers(h, n); return app; },

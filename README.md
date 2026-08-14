@@ -15,15 +15,25 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven 
 > - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
 > - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
 >
-> 💎 **New in v7.4.0:** 1:1 Complete Express 4 / Express 5 API Compatibility with named exports (`import { Router, json, urlencoded, static } from 'velociradix/express'`), nested sub-routes, route chaining (`router.route()`), Next.js-style File-Based Routing (`app.autoRoute('./routes')` & `app.autoRouteAsync()`) with dynamic path parameter mapping (`[id].ts` ➔ `:id`), wildcard catch-alls (`[...slug].ts` ➔ `*`), 36+ zero-dependency built-in middlewares, and comprehensive documentation! Complete `velociradix/express` Drop-in Replacement (`import express from 'velociradix/express'`), 10 Major High-Value Features (`ctx.validate()`, `app.metricsUI()`, `app.exportOpenAPI()`, `app.exportPostman()`, `app.onShutdown()`, `app.cluster()`), Morgan & Express Logger full streaming compatibility, and Synchronous Native Port Binding Protection! Complete Architecture & Technical Deep-Dive Guide ([docs/architecture.md](./docs/architecture.md)), Postman & Swagger Interactive UI Hosting, Peak Benchmark Winner (181,100 req/sec), V8 Monomorphic Property Shape Optimization (zero GC shape churn in JS `Context` & `Request` pools), Pre-cached HTTP Response Tail strings, C++ Fast-Path Static Responses (`fastGet`/`fastPost`/`fastRoute`), $O(1)$ Direct File-Descriptor Vector Tables, Thread-Local Object Pooling, 100% Zero-Copy request parsing, Cross-platform native prebuilds (`linux-x64`, `darwin-arm64`, `win32-x64`), and OIDC npm Provenance supply-chain security!
+> 💎 **New in v7.5.2:**
+> - **Type-Safe RPC Client SDK (`velociradix/client`)**: End-to-end type-safe proxy client inspired by Eden Treaty & tRPC with path chaining (`client.users['123'].get()`), auto JSON serialization, query string formatting, token auth, and interceptors.
+> - **Microservices & EventBus Engine**: Built-in high-throughput event bus with wildcard subscriptions (`user.*`, `order.**`), async broadcasting, and Request-Reply RPC (`app.requestEvent()`).
+> - **OOP & Decorators Architecture (`velociradix/decorators`)**: Class-based controller decorators (`@Controller`, `@Get`, `@Post`, `@Body`, `@Param`, `@Query`, `@Use`, `@Injectable`).
+> - **Universal Schema Validation & Type Safety**: Native declarative route schemas supporting Zod, TypeBox, Valibot, custom rules, and automatic parameter sync with OpenAPI / Swagger UI.
+> - **1:1 Complete Express 4 / Express 5 API Compatibility** (`velociradix/express`).
 
 ---
 
 ## 📚 Documentation Table of Contents
 
 - 📖 [Getting Started & Setup](./docs/guide/getting-started.md)
+- 🚀 [Type-Safe RPC Client SDK](./docs/guide/client.md)
+- 📡 [Microservices & EventBus](./docs/guide/eventbus.md)
+- 🏛️ [OOP & Decorators Architecture](./docs/guide/decorators.md)
+- 🛡️ [Schema Validation & Type Safety](./docs/guide/validation.md)
+- 📁 [File-Based Routing (`autoRoute`)](./docs/guide/file-based-routing.md)
 - 🔄 [Express Middleware & Router Compatibility (`app.useExpress`)](./docs/guide/express-compat.md)
-- ⚙️ [20+ Built-in Middlewares](./docs/guide/middlewares.md)
+- ⚙️ [36+ Built-in Middlewares](./docs/guide/middlewares.md)
 - 🧪 [Postman & Swagger UI Integration](./docs/guide/postman-swagger.md)
 - ⚡ [Application API Reference (`app`)](./docs/api/app.md)
 - 📥 [Context API Reference (`ctx`)](./docs/api/context.md)

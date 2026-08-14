@@ -162,7 +162,79 @@ async function runTests() {
     app.close();
   }
 
-  console.log('\n🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!\n');
+  // ==========================================
+  // 5. IN-MEMORY INJECT, VERSIONING & CONTEXT HELPERS
+  // ==========================================
+  console.log('\nTesting In-Memory app.inject(), Versioning & Content Helpers...');
+  const testApp = createApp();
+
+  testApp.get('/test-inject', (ctx) => {
+    return ctx.json({ injected: true, user: 'John' });
+  });
+
+  testApp.get('/format-test', (ctx) => {
+    return ctx.format({
+      json: { type: 'json' },
+      html: '<h1>HTML</h1>',
+      text: 'plain text'
+    });
+  });
+
+  testApp.version('v1', (v1) => {
+    v1.get('/profile', (ctx) => ({ version: 'v1' }));
+  });
+
+  // Test inject GET
+  const inj1 = await testApp.inject({ method: 'GET', url: '/test-inject' });
+  assert.equal(inj1.statusCode, 200);
+  assert.equal(inj1.ok, true);
+  assert.deepEqual(inj1.json(), { injected: true, user: 'John' });
+  console.log('  ✔ app.inject() GET request passed');
+
+  // Test inject format JSON
+  const injJson = await testApp.inject({ method: 'GET', url: '/format-test', headers: { accept: 'application/json' } });
+  assert.equal(injJson.statusCode, 200);
+  assert.deepEqual(injJson.json(), { type: 'json' });
+
+  // Test inject format HTML
+  const injHtml = await testApp.inject({ method: 'GET', url: '/format-test', headers: { accept: 'text/html' } });
+  assert.equal(injHtml.statusCode, 200);
+  assert.equal(injHtml.body, '<h1>HTML</h1>');
+  console.log('  ✔ ctx.format() content negotiation passed');
+
+  // Test API versioning
+  const injV1 = await testApp.inject({ method: 'GET', url: '/v1/profile' });
+  assert.equal(injV1.statusCode, 200);
+  assert.deepEqual(injV1.json(), { version: 'v1' });
+  console.log('  ✔ app.version() route routing passed');
+
+  // Test 404 injection
+  const inj404 = await testApp.inject({ method: 'GET', url: '/non-existing-path' });
+  assert.equal(inj404.statusCode, 404);
+  assert.equal(inj404.ok, false);
+  console.log('  ✔ app.inject() 404 fallback passed');
+
+  // Test multipart form-data parsing
+  testApp.post('/upload-test', async (ctx) => {
+    const data = await ctx.formData();
+    return ctx.json({ username: data.fields.username, fileName: data.files.avatar?.filename });
+  });
+
+  const boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW';
+  const multipartBody = `--${boundary}\r\nContent-Disposition: form-data; name="username"\r\n\r\nMoaaz\r\n--${boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="avatar.png"\r\nContent-Type: image/png\r\n\r\nPNGDATA\r\n--${boundary}--\r\n`;
+
+  const injUpload = await testApp.inject({
+    method: 'POST',
+    url: '/upload-test',
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+    body: multipartBody
+  });
+
+  assert.equal(injUpload.statusCode, 200);
+  assert.deepEqual(injUpload.json(), { username: 'Moaaz', fileName: 'avatar.png' });
+  console.log('  ✔ ctx.formData() multipart streaming parser passed');
+
+  console.log('\n🎉 ALL VELOCIRADIX TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 }
 

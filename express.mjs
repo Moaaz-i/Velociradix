@@ -101,6 +101,7 @@ export function Router(options = {}) {
   routerFn.post = registerRouterMethod('post');
   routerFn.put = registerRouterMethod('put');
   routerFn.delete = registerRouterMethod('delete');
+  routerFn.del = routerFn.delete;
   routerFn.patch = registerRouterMethod('patch');
   routerFn.options = registerRouterMethod('options');
   routerFn.head = registerRouterMethod('head');
@@ -230,6 +231,7 @@ export function express() {
   expressApp.post = function (path, ...handlers) { return expressApp._registerRoute('post', path, handlers); };
   expressApp.put = function (path, ...handlers) { return expressApp._registerRoute('put', path, handlers); };
   expressApp.delete = function (path, ...handlers) { return expressApp._registerRoute('del', path, handlers); };
+  expressApp.del = expressApp.delete;
   expressApp.patch = function (path, ...handlers) { return expressApp._registerRoute('patch', path, handlers); };
   expressApp.head = function (path, ...handlers) { return expressApp._registerRoute('head', path, handlers); };
   expressApp.options = function (path, ...handlers) { return expressApp._registerRoute('options', path, handlers); };

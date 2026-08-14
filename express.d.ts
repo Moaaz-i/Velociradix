@@ -77,6 +77,7 @@ export interface ExpressApp {
   post(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
   put(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
   delete(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
+  del(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
   patch(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
   head(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
   options(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressApp;
@@ -101,6 +102,7 @@ export interface ExpressRouter extends ExpressRequestHandler {
   post(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
   put(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
   delete(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
+  del(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
   patch(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
   head(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
   options(path: string, ...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRouter;
@@ -116,6 +118,7 @@ export interface ExpressRoute {
   post(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
   put(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
   delete(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
+  del(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
   patch(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
   all(...handlers: Array<ExpressRequestHandler | ExpressRequestHandler[]>): ExpressRoute;
 }

@@ -48,8 +48,9 @@ export default defineConfig({
         ],
       },
       {
-        text: '🛠️ Documentation & Tools',
+        text: '🛠️ Documentation & Testing',
         items: [
+          { text: 'In-Memory Testing (app.inject)', link: '/guide/testing' },
           { text: 'Postman & Swagger UI', link: '/guide/postman-swagger' },
           { text: 'Troubleshooting & FAQ', link: '/guide/troubleshooting' },
         ],
