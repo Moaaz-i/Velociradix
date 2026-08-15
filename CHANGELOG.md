@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v7.6.0] - 2026-08-15
+### Added
+- Premium High-Tech Documentation Theme with neon gradients and glassmorphism.
+- Official brand emblem logo (`logo.png`) and cinematic 16:9 hero banner (`banner.png`).
+- Live animated interactive terminal SVG demo (`terminal_demo.svg`).
+- Real-World Code Editor & 0.1ms Browser Testing visual showcases.
+- Visual comparative throughput benchmark graphs.
+
 ## [v7.5.4] - 2026-08-15
 ### Changed
 - Added version notices and installation warnings to use `velociradix@latest` across documentation and README.

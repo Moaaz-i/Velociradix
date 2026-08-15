@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/public/banner.png" alt="Velociradix Banner" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
+</p>
+
 # ⚡ Velociradix
 
 [![npm version](https://img.shields.io/npm/v/velociradix.svg)](https://www.npmjs.com/package/velociradix)
@@ -9,6 +13,10 @@
 A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS/BSD, `epoll` on Linux) with multi-threaded `SO_REUSEPORT` worker threads, a C++ Radix Trie router, zero-copy HTTP parsing, native prebuilt binaries, and a rich 40-feature JavaScript/TypeScript facade.
 
 > 📖 **Official Documentation**: [https://moaaz-i.github.io/Velociradix](https://moaaz-i.github.io/Velociradix)
+
+<p align="center">
+  <img src="./terminal_demo.svg" alt="Velociradix Live Interactive Terminal Demo" width="100%" />
+</p>
 
 > **🚀 Benchmark (500,000 requests, Apple M1, HTTP Pipelining):**
 > - **Pure C++ Engine**: **~450,000 req/s** (**11.2x faster than Express**)

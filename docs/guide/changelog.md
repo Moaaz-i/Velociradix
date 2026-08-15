@@ -7,6 +7,15 @@ All notable architectural milestones, feature additions, and versions of **Veloc
 
 ---
 
+## [v7.6.0] - 2026-08-15 🎨 MAJOR VISUAL & BRANDING RELEASE
+### 🌟 Visual Identity, Modern Theme & Interactive Showcases
+- **Premium High-Tech Theme**: Rebuilt VitePress documentation with glowing Cyberpunk neon accents, glassmorphism card surfaces, and gradient typography.
+- **Official Brand Identity**: Introduced official high-tech emblem logo (`logo.png`) and cinematic 16:9 hero banner (`banner.png`).
+- **Live Animated Terminal Demo**: Added interactive vector terminal animation (`terminal_demo.svg`) demonstrating real-time C++ engine startup, route compilation, and client RPC execution.
+- **Real-World Code & Browser Showcases**: Added visual showcases for real TypeScript code with Zod validation and sub-millisecond (0.1ms) Swagger UI / Postman playground testing.
+- **Visual Throughput Benchmark Bars**: Added comparative visual benchmark graphs against Fastify, native `node:http`, and Express.
+
+---
 ## [v7.5.4] - 2026-08-15
 ### 📝 Documentation & Release Guard
 - **Upgrade Notice**: Added prominent alerts across documentation and `README.md` to ensure developers install `velociradix@latest`.
