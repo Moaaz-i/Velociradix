@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v7.6.1] - 2026-08-15
+### Changed
+- Minimalist transparent SVG vector logo (`logo.svg`).
+- Cleaned up documentation and README to focus strictly on code, architecture, and benchmark tables.
+
 ## [v7.6.0] - 2026-08-15
 ### Added
 - Premium High-Tech Documentation Theme with neon gradients and glassmorphism.

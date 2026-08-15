@@ -6,8 +6,8 @@ hero:
   text: "The Next-Gen C++17 HTTP Engine for Node.js"
   tagline: "Zero-dependency, multi-threaded C++ event-loop engine serving 180,000+ req/s with a Type-Safe RPC Client SDK & 36+ built-in middlewares."
   image:
-    src: /logo.png
-    alt: Velociradix
+    src: /logo.svg
+    alt: Velociradix C++ Engine
   actions:
     - theme: brand
       text: ⚡ Get Started in 30s
@@ -43,10 +43,6 @@ features:
     details: Instant setup with precompiled binaries for Linux (x64), macOS (arm64), and Windows (x64).
 ---
 
-<div style="margin: 30px 0;">
-  <img src="/terminal_demo.svg" alt="Velociradix Live Interactive Terminal Demo" style="width: 100%; border-radius: 14px;" />
-</div>
-
 <div class="benchmark-card">
   <h2 style="margin-top: 0; font-size: 1.4rem; font-weight: 700; color: #00e5ff; display: flex; align-items: center; gap: 8px;">
     ⚡ Real-World Throughput Benchmark (HTTP GET req/s)
@@ -57,8 +53,8 @@ features:
 
   <div class="benchmark-bar-row">
     <div class="benchmark-label">
-      <span style="color: #00e5ff; font-weight: 700;">🚀 Velociradix (v7.5.4)</span>
-      <span style="color: #00e5ff; font-weight: 700;">181,420 req/s (0.5ms)</span>
+      <span style="color: #00e5ff; font-weight: 700;">🚀 Velociradix (C++17 Multi-Thread)</span>
+      <span style="color: #00e5ff; font-weight: 700;">181,420 req/s (0.52ms)</span>
     </div>
     <div class="benchmark-bar-track">
       <div class="benchmark-bar-fill benchmark-bar-velociradix" style="width: 100%;">
@@ -70,7 +66,7 @@ features:
   <div class="benchmark-bar-row">
     <div class="benchmark-label">
       <span style="color: #e2e8f0;">Fastify (v4.28)</span>
-      <span style="color: #94a3b8;">52,300 req/s (1.9ms)</span>
+      <span style="color: #94a3b8;">52,300 req/s (1.91ms)</span>
     </div>
     <div class="benchmark-bar-track">
       <div class="benchmark-bar-fill benchmark-bar-fastify" style="width: 29%;">
@@ -82,7 +78,7 @@ features:
   <div class="benchmark-bar-row">
     <div class="benchmark-label">
       <span style="color: #e2e8f0;">node:http (Native Node.js)</span>
-      <span style="color: #94a3b8;">48,100 req/s (2.1ms)</span>
+      <span style="color: #94a3b8;">48,100 req/s (2.10ms)</span>
     </div>
     <div class="benchmark-bar-track">
       <div class="benchmark-bar-fill benchmark-bar-node" style="width: 26%;">
@@ -94,7 +90,7 @@ features:
   <div class="benchmark-bar-row">
     <div class="benchmark-label">
       <span style="color: #e2e8f0;">Express (v4.19 / v5)</span>
-      <span style="color: #94a3b8;">11,200 req/s (8.9ms)</span>
+      <span style="color: #94a3b8;">11,200 req/s (8.92ms)</span>
     </div>
     <div class="benchmark-bar-track">
       <div class="benchmark-bar-fill benchmark-bar-express" style="width: 7%;">
@@ -154,20 +150,3 @@ console.log(user.name); // 'Moaaz'
 ::: tip 📦 100% Zero Runtime Dependencies
 Velociradix combines the raw native power of C++17 with strict Node.js runtime bindings. No unmaintained packages, no supply chain vulnerabilities, instant startup in less than 2 milliseconds.
 :::
-
-## 💻 Clean TypeScript & Instant Execution
-
-Write concise enterprise controllers with Zod validation and run them with sub-millisecond execution times:
-
-<p align="center" style="margin: 25px 0;">
-  <img src="/editor_preview.png" alt="Velociradix Real Code Editor Showcase" style="width: 100%; border-radius: 14px; border: 1px solid rgba(0, 229, 255, 0.25); box-shadow: 0 16px 40px rgba(0,0,0,0.6);" />
-</p>
-
-## 🌐 Instant Interactive API Testing (0.1ms)
-
-Test endpoints live in your browser with self-hosted Swagger UI and Postman Playground:
-
-<p align="center" style="margin: 25px 0;">
-  <img src="/browser_preview.png" alt="Velociradix Interactive Browser Playground" style="width: 100%; border-radius: 14px; border: 1px solid rgba(0, 229, 255, 0.25); box-shadow: 0 16px 40px rgba(0,0,0,0.6);" />
-</p>
-

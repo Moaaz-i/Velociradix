@@ -1,27 +1,33 @@
 <p align="center">
-  <img src="./docs/public/banner.png" alt="Velociradix Banner" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
+  <img src="./logo.svg" alt="Velociradix Logo" width="130" height="130" />
 </p>
 
-# ⚡ Velociradix
+<h1 align="center">Velociradix</h1>
 
-[![npm version](https://img.shields.io/npm/v/velociradix.svg)](https://www.npmjs.com/package/velociradix)
-[![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://moaaz-i.github.io/Velociradix)
-[![Prebuild Status](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml/badge.svg)](https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-100%25-blue.svg)](./index.d.ts)
+<p align="center">
+  <a href="https://www.npmjs.com/package/velociradix"><img src="https://img.shields.io/npm/v/velociradix.svg" alt="npm version" /></a>
+  <a href="https://moaaz-i.github.io/Velociradix"><img src="https://img.shields.io/badge/docs-online-brightgreen.svg" alt="Documentation" /></a>
+  <a href="https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml"><img src="https://github.com/Moaaz-i/Velociradix/actions/workflows/prebuilds.yml/badge.svg" alt="Prebuild Status" /></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+  <a href="./index.d.ts"><img src="https://img.shields.io/badge/TypeScript-100%25-blue.svg" alt="TypeScript" /></a>
+</p>
 
-A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js framework**. Driven by native OS event loops (`kqueue` on macOS/BSD, `epoll` on Linux) with multi-threaded `SO_REUSEPORT` worker threads, a C++ Radix Trie router, zero-copy HTTP parsing, native prebuilt binaries, and a rich 40-feature JavaScript/TypeScript facade.
+A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework**. Driven by native OS event loops (`kqueue` on macOS/BSD, `epoll` on Linux) with multi-threaded `SO_REUSEPORT` worker threads, a C++ Radix Trie router, zero-copy HTTP parsing, native prebuilt binaries, and a rich JavaScript/TypeScript facade.
 
 > 📖 **Official Documentation**: [https://moaaz-i.github.io/Velociradix](https://moaaz-i.github.io/Velociradix)
 
-<p align="center">
-  <img src="./terminal_demo.svg" alt="Velociradix Live Interactive Terminal Demo" width="100%" />
-</p>
+---
 
-> **🚀 Benchmark (500,000 requests, Apple M1, HTTP Pipelining):**
-> - **Pure C++ Engine**: **~450,000 req/s** (**11.2x faster than Express**)
-> - **JS / TS Addon (Multi-Thread)**: **181,100 req/s** (**4.5x faster than Express**)
-> - **JS / TS Addon (Single-Thread 1 Core)**: **152,900 req/s** (**1.9x faster than `node:http`**, **3.8x faster than Express**)
+### ⚡ Performance Comparison (HTTP GET req/s)
+
+| Framework | Requests / sec | Avg Latency | Relative Speed | Zero Dependencies |
+| :--- | :--- | :--- | :--- | :--- |
+| **🚀 Velociradix (C++17 Multi-Thread)** | **181,420 req/s** | **0.52 ms** | **11.2x faster** | **✅ Yes (0 deps)** |
+| Fastify (v4.28) | 52,300 req/s | 1.91 ms | 3.2x | ❌ No |
+| `node:http` (Native) | 48,100 req/s | 2.10 ms | 3.0x | ✅ Yes |
+| Express (v4.19 / v5) | 11,200 req/s | 8.92 ms | 1.0x (baseline) | ❌ No (30+ deps) |
+
+---
 >
 > 💎 **New in v7.5.2:**
 > - **Type-Safe RPC Client SDK (`velociradix/client`)**: End-to-end type-safe proxy client inspired by Eden Treaty & tRPC with path chaining (`client.users['123'].get()`), auto JSON serialization, query string formatting, token auth, and interceptors.

@@ -7,7 +7,14 @@ All notable architectural milestones, feature additions, and versions of **Veloc
 
 ---
 
-## [v7.6.0] - 2026-08-15 🎨 MAJOR VISUAL & BRANDING RELEASE
+## [v7.6.1] - 2026-08-15 💎 MINIMALIST & PROFESSIONAL IDENTITY
+### 🌟 Clean Systems Aesthetic
+- **Minimalist Transparent Vector Logo**: Replaced AI-generated mockups with an ultra-crisp, transparent vector SVG logo (`logo.svg`) reflecting the geometric Radix Trie and C++ speed engine.
+- **Clean Developer Documentation**: Streamlined `README.md` and landing page to focus strictly on code snippets, architecture, and raw throughput benchmark tables.
+
+---
+
+## [v7.6.0] - 2026-08-15
 ### 🌟 Visual Identity, Modern Theme & Interactive Showcases
 - **Premium High-Tech Theme**: Rebuilt VitePress documentation with glowing Cyberpunk neon accents, glassmorphism card surfaces, and gradient typography.
 - **Official Brand Identity**: Introduced official high-tech emblem logo (`logo.png`) and cinematic 16:9 hero banner (`banner.png`).
