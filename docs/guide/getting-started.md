@@ -5,8 +5,12 @@
 Install Velociradix via npm:
 
 ```bash
-npm install velociradix
+npm install velociradix@latest
 ```
+
+> [!IMPORTANT]
+> **Use `velociradix@latest` for Modern Features**:
+> Core subpath modules like `velociradix/client`, `velociradix/express`, `velociradix/decorators`, `app.inject()`, and `app.group()` require Velociradix v7.5.0+. If you are upgrading from legacy v6.x, make sure to install `@latest` to enable subpath imports.
 
 Velociradix includes precompiled native binaries (`prebuilds/`) for Linux (`x64`), macOS (`arm64`), and Windows (`x64`). If a prebuilt binary is available, installation is **instant**.
 

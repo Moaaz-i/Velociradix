@@ -24,20 +24,20 @@ features:
     title: Extreme C++ Performance
     details: ~450,000 req/s pure C++ engine and 181,000 req/s Node.js facade with epoll/kqueue & multi-threaded SO_REUSEPORT.
   - icon: 🛡️
-    title: 20+ Production Middlewares
-    details: Built-in Helmet, Rate Limit, Slow Down, CSRF, JWT, Encrypted Cookies, Response Compression & Security Headers.
+    title: 36+ Built-in Middlewares & Express Bridge
+    details: Built-in 1:1 Express 4/5 compatibility, Helmet, Rate Limit, CSRF, JWT, Cookies & Security Headers.
+  - icon: 🚀
+    title: Type-Safe RPC Client & SDK
+    details: Zero-boilerplate proxy client (velociradix/client) with path chaining, query string formatting & token auth.
+  - icon: 🏛️
+    title: OOP Decorators & Microservices
+    details: Clean NestJS-style decorators (@Controller, @Get, @Injectable) plus a high-throughput EventBus engine.
   - icon: 📜
     title: Postman & Swagger Interactive UI
-    details: Self-hosted Postman API Documentation Playground and OpenAPI 3.0 interactive spec generator built-in out of the box.
-  - icon: 🚀
-    title: Zero-Dependency & Monomorphic
-    details: Pure C++17 addon + Node.js native libraries. Zero GC shape churn with strict V8 monomorphic Context pools.
+    details: Self-hosted Postman Playground and OpenAPI 3.0 interactive Swagger spec generator built-in.
   - icon: 📦
-    title: Prebuilt Binary Matrix
-    details: Instant setup with precompiled native binaries for Linux (x64), macOS (arm64/Apple Silicon), and Windows (x64).
-  - icon: ⚡
-    title: C++ Fast-Path Engine
-    details: Bypasses JS layer for ultra-low latency static responses delivering 120,000+ req/s zero-allocation routing.
+    title: Prebuilt Binaries & Zero Dependencies
+    details: Instant setup with precompiled binaries for Linux (x64), macOS (arm64), and Windows (x64).
 ---
 
 ## ⚡ Benchmarks Comparison (req/s)

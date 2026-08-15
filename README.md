@@ -90,6 +90,18 @@ npx velociradix init
 
 ---
 
+## 📦 Installation
+
+```bash
+npm install velociradix@latest
+```
+
+> [!IMPORTANT]
+> **Always use `velociradix@latest` (`v7.5+`)**:
+> Modern subpath features like `velociradix/client`, `velociradix/express`, `velociradix/decorators`, `app.inject()`, and `app.group()` require Velociradix v7.5.0 or later. Older legacy releases (v6.x) do not include subpath exports and will throw `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+
+---
+
 ## 🚀 Quick Start
 
 ### JavaScript (ES Modules)
