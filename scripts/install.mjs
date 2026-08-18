@@ -82,7 +82,20 @@ async function main() {
   if (!headers) headers = await downloadHeaders();
 
   if (os.platform() === 'win32') {
-    console.log('[velociradix] Compiling for Windows with clang++...');
+    // Detect available compiler: clang++, g++ (MinGW), or cl.exe (MSVC)
+    let compiler = 'clang++';
+    if (spawnSync('clang++', ['--version'], { stdio: 'ignore' }).status !== 0) {
+      if (spawnSync('g++', ['--version'], { stdio: 'ignore' }).status !== 0) {
+        if (spawnSync('cl.exe', ['/?'], { stdio: 'ignore' }).status !== 0) {
+          console.error('[velociradix] No C++17 compiler found. Install clang++, MinGW g++, or Visual Studio Build Tools.');
+          throw new Error('No C++17 compiler found');
+        }
+        compiler = 'cl.exe';
+      } else {
+        compiler = 'g++';
+      }
+    }
+    console.log(`[velociradix] Compiling for Windows with ${compiler}...`);
     mkdirSync(path.join(root, 'obj'), { recursive: true });
     mkdirSync(path.join(root, 'bin'), { recursive: true });
     
@@ -100,40 +113,62 @@ async function main() {
     const normHeaders = headers.replaceAll('\\', '/');
     const normNodeLib = nodeLibPath.replaceAll('\\', '/');
 
-    const c1 = spawnSync('clang++', [
-      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src',
-      '-c', '-o', 'obj/velociradix.o', 'src/velociradix.cpp'
-    ], { cwd: root, stdio: 'inherit' });
-    if (c1.status !== 0) process.exit(c1.status ?? 1);
+    if (compiler === 'cl.exe') {
+      const c1 = spawnSync('cl.exe', [
+        '/std:c++17', '/O2', '/EHsc', '/I', 'src',
+        '/c', '/Fo:obj/velociradix.o', 'src/velociradix.cpp'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c1.status !== 0) throw new Error(`velociradix: cl.exe compile step 1 failed (exit ${c1.status})`);
 
-    const c2 = spawnSync('clang++', [
-      '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src', '-I', normHeaders,
-      '-c', '-o', 'obj/addon.o', 'src/addon.cpp'
-    ], { cwd: root, stdio: 'inherit' });
-    if (c2.status !== 0) process.exit(c2.status ?? 1);
+      const c2 = spawnSync('cl.exe', [
+        '/std:c++17', '/O2', '/EHsc', '/I', 'src', '/I', normHeaders,
+        '/c', '/Fo:obj/addon.o', 'src/addon.cpp'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c2.status !== 0) throw new Error(`velociradix: cl.exe compile step 2 failed (exit ${c2.status})`);
 
-    const c3 = spawnSync('clang++', [
-      '-shared', '-o', 'bin/velociradix.node',
-      'obj/velociradix.o', 'obj/addon.o', normNodeLib, '-lws2_32'
-    ], { cwd: root, stdio: 'inherit' });
-    if (c3.status !== 0) process.exit(c3.status ?? 1);
+      const c3 = spawnSync('cl.exe', [
+        '/LD', '/Fe:bin/velociradix.node',
+        'obj/velociradix.o', 'obj/addon.o', normNodeLib, 'ws2_32.lib'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c3.status !== 0) throw new Error(`velociradix: cl.exe link failed (exit ${c3.status})`);
+    } else {
+      const c1 = spawnSync(compiler, [
+        '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src',
+        '-c', '-o', 'obj/velociradix.o', 'src/velociradix.cpp'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c1.status !== 0) throw new Error(`velociradix: ${compiler} compile step 1 failed (exit ${c1.status})`);
+
+      const c2 = spawnSync(compiler, [
+        '-std=c++17', '-O3', '-Wall', '-Wextra', '-I', 'src', '-I', normHeaders,
+        '-c', '-o', 'obj/addon.o', 'src/addon.cpp'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c2.status !== 0) throw new Error(`velociradix: ${compiler} compile step 2 failed (exit ${c2.status})`);
+
+      const c3 = spawnSync(compiler, [
+        '-shared', '-o', 'bin/velociradix.node',
+        'obj/velociradix.o', 'obj/addon.o', normNodeLib, '-lws2_32'
+      ], { cwd: root, stdio: 'inherit' });
+      if (c3.status !== 0) throw new Error(`velociradix: ${compiler} link failed (exit ${c3.status})`);
+    }
 
     console.log('[velociradix] native addon built OK');
     return;
   }
 
-  const r = spawnSync('make', ['-B', `NODE_INC=${headers}`, 'addon'], {
+  const hasClang = spawnSync('clang++', ['--version'], { stdio: 'ignore' }).status === 0;
+  const compilerFlag = hasClang ? '' : 'CXX=g++';
+  const r = spawnSync('make', ['-B', compilerFlag, `NODE_INC=${headers}`, 'addon'].filter(Boolean), {
     cwd: root,
     stdio: 'inherit',
   });
   if (r.status !== 0) {
     console.error('[velociradix] native build failed. A C++17 compiler (clang++/g++) is required.');
-    process.exit(r.status ?? 1);
+    throw new Error(`velociradix: make failed (exit ${r.status})`);
   }
   console.log('[velociradix] native addon built OK');
 }
 
 main().catch((e) => {
   console.error('[velociradix] build failed:', e.message);
-  process.exit(1);
+  process.exitCode = 1;
 });

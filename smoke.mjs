@@ -126,11 +126,11 @@ app
     await ctx.sendStream(s, "text/plain");
   })
   .get("/sse", (ctx) => {
-    ctx.sse((sendEvent, close) => {
-      sendEvent({ now: Date.now() }, "tick");
+    ctx.sse((stream) => {
+      stream.send({ now: Date.now() }, "tick");
       setTimeout(() => {
-        sendEvent({ done: true }, "end");
-        close();
+        stream.send({ done: true }, "end");
+        stream.close();
       }, 100);
     });
   })
@@ -260,6 +260,7 @@ async function run() {
 
   console.log("Closing app...");
   app.close();
+  try { unlinkSync(tempFile); } catch {}
   process.exit(0);
 }
 

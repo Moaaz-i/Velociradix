@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v8.0.0] - 2026-08-18
+
+> **BREAKING CHANGE:** `encryptValue()`/`decryptValue()` upgraded from AES-256-CBC to AES-256-GCM (authenticated encryption). Existing CBC-encrypted values will not decrypt with GCM. Re-encrypt any stored values after upgrading.
+
+### Security
+- AES-256-CBC → AES-256-GCM authenticated encryption (IV + authTag + ciphertext).
+- JWT `jwtVerify()` blocks `alg: none` bypass; supports HS256/HS384/HS512.
+- `setCookie()` URL-encodes cookie name & value.
+- CSRF `_csrf` cookie uses `secure: true`.
+- `sendFile()` path traversal protection via `root` option.
+- `cookieParse()` handles combined Set-Cookie headers from fetch (`, ` separator).
+- Postman/Swagger HTML template escapes `</script` and `<!--` (XSS).
+- C++ engine adds `SO_REUSEPORT` on Linux; expanded status phrases.
+
+### Fixed
+- `sseInterval()` was silently broken — `native.respond()` could only fire once due to atomic `responded.exchange(true)`. Rewired to use `native.sseBegin()`.
+- `compress()` Context method was a no-op; now performs actual gzip/deflate.
+- `compress` middleware hooks `ctx.send` **before** `next()` (was after, making it ineffective).
+- `jwtSign()` always used SHA-256 regardless of `alg` option; now maps HS384→sha384, HS512→sha512.
+- `express.mjs` used bare `require()` in ESM context; replaced with top-level imports.
+- Express bridge `sendFile()`/`json()` no longer prematurely set `finished`/`headersSent`.
+- Context pool `releaseContext()` resets all stale fields.
+
+### Added
+- 7 new error classes: `MethodNotAllowedError` (405), `ConflictError` (409), `UnprocessableEntityError` (422), `TooManyRequestsError` (429), `BadGatewayError` (502), `ServiceUnavailableError` (503), `GatewayTimeoutError` (504).
+- `app.cluster()` alias for `setWorkers()`.
+- `app.del()` alias for `delete()`.
+- `getMimeType()` expanded with 25+ extensions (svg, gif, woff2, wasm, yaml, etc.).
+- `jwtVerify()` on Context accepts `opts` with `algorithms` array.
+- `jwtAuth()` middleware passes `algorithms` option through.
+- `sendFile({root})` to prevent path traversal when serving user-influenced paths.
+- `download()`/`attachment()` use RFC 5987 for non-ASCII filenames.
+- `all()` uses single `registerRoute('ALL', ...)` call.
+- `autoScale()` interval is `unref()`'d.
+- C++ chunked encoding errors now trigger proper 400 response.
+
+### TypeScript
+- `Request` interface — removed non-existent properties (`originalUrl`, `rawHeaders`, `ip`, `ips`, `requestId`, `secure`, `xhr`, `httpVersion`, `socket`, `connection`).
+- Removed non-functional `ws()` from App interface.
+- Added `root` to `SendFileOptions`.
+- `decorators.d.ts` import path fixed (`./index.js` → `./index.mjs`).
+- `jwtVerify` types accept `opts` parameter.
+- Expanded `RouteOptions` (`responses`, `response`, `responseCode`, `responseName`, `internal`).
+
+### Build
+- `scripts/install.mjs`: Fixed Windows `cl.exe` detection; replaced `process.exit()` with `throw`/`process.exitCode = 1`.
+- C++ native addon rebuilt with all changes.
+
+---
+
 ## [v7.6.1] - 2026-08-15
 ### Changed
 - Minimalist transparent SVG vector logo (`logo.svg`).

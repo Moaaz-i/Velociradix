@@ -41,3 +41,4 @@ Thumbs.db
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 .vitepress/
+build/

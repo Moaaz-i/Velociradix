@@ -1,4 +1,4 @@
-import type { Context, Middleware } from './index.js';
+import type { Context, Middleware } from './index.mjs';
 
 export interface ControllerOptions {
   /** Middlewares applied to all routes in this controller */

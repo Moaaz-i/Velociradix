@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <cstdlib>
 #ifdef _WIN32
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
@@ -205,9 +206,16 @@ static const char* status_phrase(int code) {
         case 401: return "Unauthorized";
         case 403: return "Forbidden";
         case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 409: return "Conflict";
         case 413: return "Payload Too Large";
+        case 422: return "Unprocessable Entity";
+        case 429: return "Too Many Requests";
         case 500: return "Internal Server Error";
         case 501: return "Not Implemented";
+        case 502: return "Bad Gateway";
+        case 503: return "Service Unavailable";
+        case 504: return "Gateway Timeout";
         default:  return "Unknown";
     }
 }
@@ -490,7 +498,9 @@ static long parse_request(char* data, size_t len, Request& req) {
                 return -1;
             }
         } else if (hd.first == "transfer-encoding") {
-            return -1; // chunked not supported
+            if (hd.second.find("chunked") != std::string_view::npos) {
+                return -1; // chunked not supported, return malformed to trigger 400
+            }
         }
     }
     size_t consumed = (size_t)(end - data) + 4;
@@ -1319,6 +1329,9 @@ int App::bind_and_listen(int port, const std::string& host) {
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 #else
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
 #endif
 
     struct sockaddr_in addr;
@@ -1490,7 +1503,39 @@ void App::handle_request(Conn* c, Request& req) {
         if (!ctx.ended) ctx.send("");
     } else if (!static_dir_.empty() && req.method == "GET") {
         try {
-            ctx.serve_file(static_dir_ + std::string(req.path));
+            std::string decoded_path = url_decode(std::string(req.path));
+            // Path traversal protection: reject .. and null bytes
+            if (decoded_path.find("..") != std::string::npos || decoded_path.find('\0') != std::string::npos) {
+                res.status = 403;
+                ctx.json(json::object({{"error", json::string("Forbidden")}}));
+            } else {
+                std::string full_path = static_dir_ + decoded_path;
+                // Canonicalize and verify the path stays within static_dir
+                char resolved[4096];
+#ifdef _WIN32
+                if (_fullpath(resolved, full_path.c_str(), sizeof(resolved))) {
+#else
+                if (realpath(full_path.c_str(), resolved)) {
+#endif
+                    std::string resolved_str(resolved);
+                    std::string canonical_root;
+                    char root_resolved[4096];
+#ifdef _WIN32
+                    if (_fullpath(root_resolved, static_dir_.c_str(), sizeof(root_resolved)))
+#else
+                    if (realpath(static_dir_.c_str(), root_resolved))
+#endif
+                        canonical_root = root_resolved;
+                    if (!canonical_root.empty() && resolved_str.find(canonical_root) == 0) {
+                        ctx.serve_file(resolved_str);
+                    } else {
+                        res.status = 403;
+                        ctx.json(json::object({{"error", json::string("Forbidden")}}));
+                    }
+                } else {
+                    ctx.serve_file(full_path);
+                }
+            }
         } catch (...) {
             res.status = 500;
             ctx.json(json::object({{"error", json::string("Internal Server Error")}}));

@@ -1,14 +1,18 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   createHmac,
   randomBytes,
+  timingSafeEqual,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from 'node:module';
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve, normalize, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import http from "node:http";
+import zlib from "node:zlib";
 
 const require = createRequire(import.meta.url);
 
@@ -37,7 +41,14 @@ class BadRequestError extends HttpError { constructor(msg = 'Bad Request', detai
 class UnauthorizedError extends HttpError { constructor(msg = 'Unauthorized', details) { super(401, msg, details); } }
 class ForbiddenError extends HttpError { constructor(msg = 'Forbidden', details) { super(403, msg, details); } }
 class NotFoundError extends HttpError { constructor(msg = 'Not Found', details) { super(404, msg, details); } }
+class MethodNotAllowedError extends HttpError { constructor(msg = 'Method Not Allowed', details) { super(405, msg, details); } }
+class ConflictError extends HttpError { constructor(msg = 'Conflict', details) { super(409, msg, details); } }
+class UnprocessableEntityError extends HttpError { constructor(msg = 'Unprocessable Entity', details) { super(422, msg, details); } }
+class TooManyRequestsError extends HttpError { constructor(msg = 'Too Many Requests', details) { super(429, msg, details); } }
 class InternalServerError extends HttpError { constructor(msg = 'Internal Server Error', details) { super(500, msg, details); } }
+class BadGatewayError extends HttpError { constructor(msg = 'Bad Gateway', details) { super(502, msg, details); } }
+class ServiceUnavailableError extends HttpError { constructor(msg = 'Service Unavailable', details) { super(503, msg, details); } }
+class GatewayTimeoutError extends HttpError { constructor(msg = 'Gateway Timeout', details) { super(504, msg, details); } }
 
 // --- Crypto & JWT Helpers ---
 function base64UrlEncode(str) {
@@ -51,7 +62,11 @@ function base64UrlDecode(str) {
 }
 
 function jwtSign(payload, secret, opts = {}) {
-  const header = { alg: opts.alg || 'HS256', typ: 'JWT' };
+  const algMap = { HS256: 'sha256', HS384: 'sha384', HS512: 'sha512' };
+  const alg = opts.alg || 'HS256';
+  const hashAlg = algMap[alg];
+  if (!hashAlg) throw new Error(`Unsupported JWT algorithm: ${alg}`);
+  const header = { alg, typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
   const fullPayload = {
     ...payload,
@@ -60,19 +75,30 @@ function jwtSign(payload, secret, opts = {}) {
   };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
-  const signature = createHmac('sha256', secret)
+  const signature = createHmac(hashAlg, secret)
     .update(`${encodedHeader}.${encodedPayload}`)
     .digest('base64')
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   return `${encodedHeader}.${encodedPayload}.${signature}`;
 }
 
-function jwtVerify(token, secret) {
+function jwtVerify(token, secret, opts = {}) {
   if (!token || typeof token !== 'string') throw new UnauthorizedError('Invalid token format');
   const parts = token.split('.');
   if (parts.length !== 3) throw new UnauthorizedError('Invalid token structure');
   const [headerB64, payloadB64, signatureB64] = parts;
-  const expectedSig = createHmac('sha256', secret)
+  let header;
+  try { header = JSON.parse(base64UrlDecode(headerB64)); } catch { throw new UnauthorizedError('Invalid token header'); }
+  const allowedAlg = opts.algorithms || ['HS256'];
+  if (!header.alg || header.alg === 'none' || !allowedAlg.includes(header.alg)) {
+    throw new UnauthorizedError(`Invalid algorithm: ${header.alg || 'none'}`);
+  }
+  const algMap = { HS256: 'sha256', HS384: 'sha384', HS512: 'sha512' };
+  const hashAlg = algMap[header.alg];
+  if (!hashAlg) {
+    throw new UnauthorizedError(`Unsupported algorithm: ${header.alg}`);
+  }
+  const expectedSig = createHmac(hashAlg, secret)
     .update(`${headerB64}.${payloadB64}`)
     .digest('base64')
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -86,20 +112,24 @@ function jwtVerify(token, secret) {
 
 function encryptValue(text, secretKey) {
   const key = createHmac('sha256', secretKey).digest();
-  const iv = randomBytes(16);
-  const cipher = createCipheriv('aes-256-cbc', key, iv);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
   let encrypted = cipher.update(String(text), 'utf8', 'hex');
   encrypted += cipher.final('hex');
-  return `${iv.toString('hex')}:${encrypted}`;
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
 }
 
 function decryptValue(encryptedText, secretKey) {
   try {
     const key = createHmac('sha256', secretKey).digest();
     const parts = encryptedText.split(':');
+    if (parts.length !== 3) return undefined;
     const iv = Buffer.from(parts[0], 'hex');
-    const decipher = createDecipheriv('aes-256-cbc', key, iv);
-    let decrypted = decipher.update(parts[1], 'hex', 'utf8');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(parts[2], 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch {
@@ -155,6 +185,14 @@ function releaseContext(ctx) {
     ctx._session = undefined;
     ctx._expressRes = undefined;
     ctx._expressResList = undefined;
+    ctx._sse = false;
+    ctx._sanitizedQuery = false;
+    ctx.valid = undefined;
+    ctx.validBody = undefined;
+    ctx.validQuery = undefined;
+    ctx.validParams = undefined;
+    ctx._bodyData = undefined;
+    ctx.cookies = undefined;
     if (ctx._req) ctx._req._reset(0);
     contextPool.push(ctx);
   }
@@ -287,7 +325,6 @@ class Context {
     this._expressResList = undefined;
     this._sse = false;
     this._sanitizedQuery = false;
-    this.query = Context.prototype.query;
     this._req._reset(ptr);
   }
 
@@ -304,7 +341,9 @@ class Context {
     return this;
   }
   setCookie(name, value, opts = {}) {
-    let c = `${name}=${value}`;
+    const encName = encodeURIComponent(String(name));
+    const encValue = encodeURIComponent(String(value));
+    let c = `${encName}=${encValue}`;
     if (opts.httpOnly) c += '; HttpOnly';
     if (opts.secure) c += '; Secure';
     if (opts.maxAge !== undefined) c += `; Max-Age=${opts.maxAge}`;
@@ -346,10 +385,10 @@ class Context {
     respondRes(this, this.statusCode, body);
     return this;
   }
-  json(v) { ensureContentType(this, 'application/json'); return this.send(JSON.stringify(v)); }
-  html(v) { ensureContentType(this, 'text/html; charset=utf-8'); return this.send(String(v)); }
+  json(v) { ensureContentType(this, 'application/json; charset=utf-8'); return this.send(Buffer.from(JSON.stringify(v), 'utf8')); }
+  html(v) { ensureContentType(this, 'text/html; charset=utf-8'); return this.send(Buffer.from(String(v), 'utf8')); }
+
   redirect(url, code = 302) { this.setHeader('Location', url); return this.status(code).send(''); }
-  attachment(filename) { return this.setHeader('Content-Disposition', `attachment; filename="${filename}"`); }
   noCache() {
     return this.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -358,53 +397,6 @@ class Context {
     });
   }
   cache(seconds) { return this.setHeader('Cache-Control', `public, max-age=${seconds}`); }
-  validate(rules, targetData) {
-    const data = targetData ?? (this._bodyData || this.req.body || queryParse(this.req.query));
-    const errors = [];
-    if (typeof rules !== 'object' || rules === null) return data;
-    for (const field in rules) {
-      const rule = rules[field];
-      const val = data ? data[field] : undefined;
-      if (rule.required && (val === undefined || val === null || val === '')) {
-        errors.push({ field, message: `${field} is required` });
-        continue;
-      }
-      if (val !== undefined && val !== null) {
-        if (rule.type === 'string' && typeof val !== 'string') {
-          errors.push({ field, message: `${field} must be a string` });
-        } else if (rule.type === 'number' && typeof val !== 'number' && isNaN(Number(val))) {
-          errors.push({ field, message: `${field} must be a number` });
-        } else if (rule.type === 'boolean' && typeof val !== 'boolean') {
-          errors.push({ field, message: `${field} must be a boolean` });
-        } else if (rule.type === 'email' && (typeof val !== 'string' || !val.includes('@'))) {
-          errors.push({ field, message: `${field} must be a valid email` });
-        } else if (rule.type === 'array' && !Array.isArray(val)) {
-          errors.push({ field, message: `${field} must be an array` });
-        }
-        if (rule.min !== undefined) {
-          if (typeof val === 'string' || Array.isArray(val)) {
-            if (val.length < rule.min) errors.push({ field, message: `${field} length must be at least ${rule.min}` });
-          } else if (typeof val === 'number' && val < rule.min) {
-            errors.push({ field, message: `${field} must be at least ${rule.min}` });
-          }
-        }
-        if (rule.max !== undefined) {
-          if (typeof val === 'string' || Array.isArray(val)) {
-            if (val.length > rule.max) errors.push({ field, message: `${field} length must be at most ${rule.max}` });
-          } else if (typeof val === 'number' && val > rule.max) {
-            errors.push({ field, message: `${field} must be at most ${rule.max}` });
-          }
-        }
-        if (rule.pattern && rule.pattern instanceof RegExp && !rule.pattern.test(String(val))) {
-          errors.push({ field, message: `${field} format is invalid` });
-        }
-      }
-    }
-    if (errors.length > 0) {
-      throw new BadRequestError('Validation failed', { errors });
-    }
-    return data;
-  }
   get(name) {
     if (!name) return undefined;
     if (Object.prototype.hasOwnProperty.call(this._req, 'headers')) {
@@ -474,10 +466,10 @@ class Context {
   jwtSign(payload, secret, opts) {
     return jwtSign(payload, secret, opts);
   }
-  jwtVerify(secret) {
+  jwtVerify(secret, opts) {
     const token = this.bearerToken();
     if (!token) throw new UnauthorizedError('Missing Bearer token');
-    return jwtVerify(token, secret);
+    return jwtVerify(token, secret, opts);
   }
   accepts(...types) {
     const accept = this.get('accept');
@@ -500,22 +492,36 @@ class Context {
   }
   sendStream(stream, ct) {
     if (this.done) return Promise.resolve();
-    const chunks = [];
+    if (ct) this.setHeader('Content-Type', ct);
     return new Promise((resolve, reject) => {
+      const chunks = [];
       stream.on('data', (c) => chunks.push(c));
-      stream.on('end', resolve);
-      stream.on('error', reject);
-    }).then(() => {
-      if (ct) this.setHeader('Content-Type', ct);
-      this.send(Buffer.concat(chunks));
+      stream.on('end', () => {
+        if (!this.done) {
+          this.send(Buffer.concat(chunks));
+        }
+        resolve();
+      });
+      stream.on('error', (err) => {
+        if (!this.done) {
+          this.status(500).send('Stream Error');
+        }
+        reject(err);
+      });
     });
   }
   sendFile(filepath, opts = {}) {
-    const fullPath = resolve(filepath);
-    if (!existsSync(fullPath)) {
+    const resolved = resolve(filepath);
+    if (opts.root) {
+      const rootResolved = resolve(opts.root);
+      if (!resolved.startsWith(rootResolved + '/') && resolved !== rootResolved) {
+        return this.status(403).send('Forbidden');
+      }
+    }
+    if (!existsSync(resolved)) {
       return this.status(404).send('File Not Found');
     }
-    const stat = statSync(fullPath);
+    const stat = statSync(resolved);
     const etag = `"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
     this.setHeader('ETag', etag);
 
@@ -529,31 +535,33 @@ class Context {
       const start = parseInt(parts[0], 10) || 0;
       const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
       const chunksize = end - start + 1;
-      const content = readFileSync(fullPath).subarray(start, end + 1);
+      const content = readFileSync(resolved).subarray(start, end + 1);
 
       this.status(206).set({
         'Content-Range': `bytes ${start}-${end}/${stat.size}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
-        'Content-Type': opts.contentType || getMimeType(fullPath),
+        'Content-Type': opts.contentType || getMimeType(resolved),
       });
       return this.send(content);
     }
 
-    this.setHeader('Content-Type', opts.contentType || getMimeType(fullPath));
+    this.setHeader('Content-Type', opts.contentType || getMimeType(resolved));
     this.setHeader('Content-Length', stat.size);
-    const data = readFileSync(fullPath);
+    const data = readFileSync(resolved);
     return this.send(data);
   }
   download(filepath, filename, opts = {}) {
     const fullPath = resolve(filepath);
     const name = filename || basename(fullPath);
-    this.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
+    const safeName = /[^\x20-\x7E]/.test(name) ? `filename*=UTF-8''${encodeURIComponent(name)}` : `filename="${name}"`;
+    this.setHeader('Content-Disposition', `attachment; ${safeName}`);
     return this.sendFile(fullPath, opts);
   }
   attachment(filename) {
     if (filename) {
-      this.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      const safeName = /[^\x20-\x7E]/.test(filename) ? `filename*=UTF-8''${encodeURIComponent(filename)}` : `filename="${filename}"`;
+      this.setHeader('Content-Disposition', `attachment; ${safeName}`);
     } else {
       this.setHeader('Content-Disposition', 'attachment');
     }
@@ -599,11 +607,26 @@ class Context {
   compress() {
     if (this.done || !this._headers) return this;
     const enc = this.get('accept-encoding') || '';
-    let bodyData;
     if (enc.includes('gzip')) {
-      this.setHeader('Content-Encoding', 'gzip');
+      const body = this._bodyData;
+      if (body) {
+        const buf = typeof body === 'string' ? Buffer.from(body) : (body instanceof Uint8Array ? Buffer.from(body) : Buffer.from(JSON.stringify(body)));
+        if (buf.length >= 1024) {
+          const compressed = zlib.gzipSync(buf);
+          this.setHeader('Content-Encoding', 'gzip');
+          this.setHeader('Content-Length', compressed.length);
+        }
+      }
     } else if (enc.includes('deflate')) {
-      this.setHeader('Content-Encoding', 'deflate');
+      const body = this._bodyData;
+      if (body) {
+        const buf = typeof body === 'string' ? Buffer.from(body) : (body instanceof Uint8Array ? Buffer.from(body) : Buffer.from(JSON.stringify(body)));
+        if (buf.length >= 1024) {
+          const compressed = zlib.deflateSync(buf);
+          this.setHeader('Content-Encoding', 'deflate');
+          this.setHeader('Content-Length', compressed.length);
+        }
+      }
     }
     return this;
   }
@@ -688,43 +711,53 @@ class Context {
       bodyObj = {};
     }
     const query = bodyObj.query || this.query('query') || '';
-    const operationMatch = query.match(/(query|mutation)\s*(\w+)?\s*\{([\s\S]*)\}/i) || query.match(/\{([\s\S]*)\}/);
-    if (!operationMatch) {
-      return this.status(400).json({ errors: [{ message: 'Invalid GraphQL Query' }] });
-    }
-    const bodyContent = operationMatch[3] || operationMatch[1] || '';
-    const fieldMatches = [...bodyContent.matchAll(/(\w+)(?:\s*\(([^)]*)\))?/g)];
+    const operationType = (query.match(/^(query|mutation|subscription)\b/i) || [])[1] || 'query';
+    const nameMatch = query.match(/^(?:query|mutation|subscription)\s+(\w+)/i);
+    const operationName = bodyObj.operationName || (nameMatch ? nameMatch[1] : null);
+    const variables = bodyObj.variables || {};
     const data = {};
-    for (const match of fieldMatches) {
-      const fieldName = match[1];
-      if (typeof resolvers[fieldName] === 'function') {
-        data[fieldName] = await resolvers[fieldName](this);
-      } else if (fieldName in resolvers) {
-        data[fieldName] = resolvers[fieldName];
+    const errors = [];
+    const fieldRegex = /(\w+)\s*(?:\(([^)]*)\))?\s*\{([^}]*)\}|(\w+)(?:\s*\(([^)]*)\))?/g;
+    let match;
+    while ((match = fieldRegex.exec(query)) !== null) {
+      const fieldName = match[1] || match[4];
+      if (!fieldName || fieldName === operationType) continue;
+      try {
+        if (typeof resolvers[fieldName] === 'function') {
+          data[fieldName] = await resolvers[fieldName](this, { variables, operationName });
+        } else if (fieldName in resolvers) {
+          data[fieldName] = resolvers[fieldName];
+        }
+      } catch (e) {
+        errors.push({ message: e.message, path: [fieldName] });
       }
     }
-    return this.json({ data });
+    const result = { data };
+    if (errors.length > 0) result.errors = errors;
+    return this.json(result);
   }
   sseInterval(fn, intervalMs = 1000) {
-    this.setHeader('Content-Type', 'text/event-stream');
-    this.setHeader('Cache-Control', 'no-cache');
-    this.setHeader('Connection', 'keep-alive');
-    const timer = setInterval(async () => {
-      try {
-        const data = await fn(this);
-        const payload = typeof data === 'string' ? data : JSON.stringify(data);
-        this.send(`data: ${payload}\n\n`);
-      } catch {
-        clearInterval(timer);
-      }
-    }, intervalMs);
+    this.done = true;
+    native.sseBegin(this._ptr, (sendEvent, close) => {
+      const timer = setInterval(async () => {
+        try {
+          const data = await fn(this);
+          const payload = typeof data === 'string' ? data : JSON.stringify(data);
+          sendEvent(payload);
+        } catch {
+          clearInterval(timer);
+          close();
+        }
+      }, intervalMs);
+      if (timer.unref) timer.unref();
+    });
     return this;
   }
   csrfToken() {
     let token = this.cookie('_csrf');
     if (!token) {
       token = randomBytes(16).toString('hex');
-      this.setCookie('_csrf', token, { httpOnly: true, sameSite: 'Strict', path: '/' });
+      this.setCookie('_csrf', token, { httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
     }
     return token;
   }
@@ -754,11 +787,36 @@ function getMimeType(file) {
     '.html': 'text/html; charset=utf-8',
     '.css': 'text/css',
     '.js': 'application/javascript',
+    '.mjs': 'application/javascript',
     '.json': 'application/json',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.webp': 'image/webp',
     '.pdf': 'application/pdf',
     '.txt': 'text/plain; charset=utf-8',
+    '.xml': 'application/xml',
+    '.csv': 'text/csv',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.eot': 'application/vnd.ms-fontobject',
+    '.otf': 'font/otf',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mp3': 'audio/mpeg',
+    '.ogg': 'audio/ogg',
+    '.wav': 'audio/wav',
+    '.zip': 'application/zip',
+    '.gz': 'application/gzip',
+    '.tar': 'application/x-tar',
+    '.yaml': 'text/yaml',
+    '.yml': 'text/yaml',
+    '.md': 'text/markdown',
+    '.wasm': 'application/wasm',
   };
   return map[ext] || 'application/octet-stream';
 }
@@ -777,7 +835,7 @@ function queryParse(q) {
 function cookieParse(h) {
   const out = {};
   if (!h) return out;
-  for (const part of h.split(';')) {
+  for (const part of h.split(/;\s*|,\s+/)) {
     const eq = part.indexOf('=');
     if (eq !== -1) out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
   }
@@ -914,9 +972,10 @@ function bearerAuthMiddleware(opts = {}) {
 
 function jwtAuthMiddleware(opts = {}) {
   const secret = opts.secret;
+  const algorithms = opts.algorithms;
   return (ctx, next) => {
     try {
-      ctx.state.user = ctx.jwtVerify(secret);
+      ctx.state.user = ctx.jwtVerify(secret, algorithms ? { algorithms } : undefined);
       return next();
     } catch (err) {
       return ctx.status(401).json({ error: err.message });
@@ -926,11 +985,30 @@ function jwtAuthMiddleware(opts = {}) {
 
 function compressMiddleware(opts = {}) {
   const threshold = opts.threshold ?? 1024;
-  return async (ctx, next) => {
-    await next();
+  return (ctx, next) => {
     const enc = ctx.get('accept-encoding') || '';
-    if (ctx.done || (!enc.includes('gzip') && !enc.includes('deflate'))) return;
-    // Applied before send
+    const origSend = ctx.send.bind(ctx);
+    ctx.send = (body) => {
+      if (body === undefined || body === null || ctx.done) return origSend(body);
+      let buf;
+      if (typeof body === 'string') buf = Buffer.from(body);
+      else if (body instanceof Uint8Array || Buffer.isBuffer(body)) buf = Buffer.from(body);
+      else { buf = Buffer.from(JSON.stringify(body)); }
+      if (buf.length < threshold) return origSend(buf);
+      if (enc.includes('gzip')) {
+        const compressed = zlib.gzipSync(buf);
+        ctx.setHeader('Content-Encoding', 'gzip');
+        ctx.setHeader('Content-Length', compressed.length);
+        return origSend(compressed);
+      } else if (enc.includes('deflate')) {
+        const compressed = zlib.deflateSync(buf);
+        ctx.setHeader('Content-Encoding', 'deflate');
+        ctx.setHeader('Content-Length', compressed.length);
+        return origSend(compressed);
+      }
+      return origSend(buf);
+    };
+    return next();
   };
 }
 
@@ -1029,7 +1107,8 @@ function sanitizeMiddleware() {
 }
 
 function sessionMiddleware(opts = {}) {
-  const secret = opts.secret || 'default-secret-key';
+  const secret = opts.secret;
+  if (!secret) throw new Error('session() middleware requires a "secret" option');
   const name = opts.name || '_session';
   return (ctx, next) => {
     const existing = ctx.getEncryptedCookie(name, secret);
@@ -1172,7 +1251,13 @@ function basicAuthMiddleware(opts = {}) {
   const realm = opts.realm ?? 'Secure Area';
   return (ctx, next) => {
     const creds = ctx.basicAuth();
-    if (!creds || !users[creds.username] || users[creds.username] !== creds.password) {
+    if (!creds || !users[creds.username]) {
+      ctx.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
+      return ctx.status(401).send('Unauthorized');
+    }
+    const stored = Buffer.from(String(users[creds.username]));
+    const provided = Buffer.from(String(creds.password));
+    if (stored.length !== provided.length || !timingSafeEqual(stored, provided)) {
       ctx.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
       return ctx.status(401).send('Unauthorized');
     }
@@ -1568,7 +1653,7 @@ function getPostmanDocHtml(collection) {
     ${requestCards}
   </div>
   <script>
-    const collectionData = ${JSON.stringify(collection, null, 2)};
+    const collectionData = ${JSON.stringify(collection, null, 2).replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--')};
     function downloadJSON() {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(collectionData, null, 2));
       const a = document.createElement('a');
@@ -1863,7 +1948,7 @@ function createApp() {
       return app.fastRoute('POST', path, data, status, headers);
     },
     all(path, handler, options) {
-      HTTP_METHODS.forEach((m) => registerRoute(m, path, handler, options));
+      registerRoute('ALL', path, handler, options);
       return app;
     },
     use(mw) {
@@ -2022,12 +2107,6 @@ function createApp() {
             return res.setHeader('Content-Disposition', filename ? `attachment; filename="${filename}"` : 'attachment');
           },
           sendFile(path, opts = {}, cb) {
-            res.headersSent = true;
-            res._header = true;
-            res.finished = true;
-            res.writableEnded = true;
-            res.emit('finish');
-            res.emit('close');
             return ctx.sendFile(path, opts);
           },
           download(path, filename, opts = {}, cb) {
@@ -2077,14 +2156,8 @@ function createApp() {
             return res.end();
           },
           json(body) {
-            res.headersSent = true;
-            res._header = true;
-            res.finished = true;
-            res.writableEnded = true;
             res.setHeader('Content-Type', 'application/json');
             ctx.status(res.statusCode);
-            res.emit('finish');
-            res.emit('close');
             return ctx.json(body);
           },
           jsonp(body) {
@@ -2108,7 +2181,8 @@ function createApp() {
             ctx.status(res.statusCode);
             res.emit('finish');
             res.emit('close');
-            return ctx.text(body);
+            ensureContentType(ctx, 'text/plain; charset=utf-8');
+            return ctx.send(Buffer.from(String(body), 'utf8'));
           },
           html(body) {
             res.headersSent = true;
@@ -2132,7 +2206,7 @@ function createApp() {
             res.emit('finish');
             res.emit('close');
             if (chunk) return ctx.send(chunk);
-            return ctx.text('');
+            return ctx.send('');
           },
           write(chunk) {
             return true;
@@ -2489,15 +2563,22 @@ function createApp() {
     },
     static(prefix, dir) { native.setStatic(h, prefix, dir); return app; },
     serveStatic(prefix, dir, opts = {}) {
+      const staticDir = resolve(dir);
       app.get(`${prefix}/*`, (ctx) => {
         const reqPath = ctx.req.path.slice(prefix.length);
-        const target = resolve(dir, reqPath.replace(/^\//, ''));
+        const target = resolve(staticDir, reqPath.replace(/^\//, ''));
+        const rel = relative(staticDir, target);
+        if (rel.startsWith('..') || rel.isAbsolute()) {
+          return ctx.status(403).send('Forbidden');
+        }
         return ctx.sendFile(target, opts);
       });
       return app;
     },
     autoRoute(dirPath, basePrefix = '') {
-      app.autoRouteAsync(dirPath, basePrefix).catch(() => {});
+      app.autoRouteAsync(dirPath, basePrefix).catch((err) => {
+        console.error('[velociradix] autoRoute error:', err.message || err);
+      });
       return app;
     },
     async autoRouteAsync(dirPath, basePrefix = '') {
@@ -2541,6 +2622,15 @@ function createApp() {
       app.get(path, (ctx) => {
         const upgrade = ctx.get('upgrade');
         if (upgrade && upgrade.toLowerCase() === 'websocket') {
+          const key = ctx.get('sec-websocket-key');
+          const acceptKey = key
+            ? createHash('sha1')
+                .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+                .digest('base64')
+            : '';
+          ctx.setHeader('Upgrade', 'websocket');
+          ctx.setHeader('Connection', 'Upgrade');
+          ctx.setHeader('Sec-WebSocket-Accept', acceptKey);
           const socket = {
             send: (msg) => ctx.send(msg),
             broadcast: (msg) => {
@@ -2609,7 +2699,7 @@ function createApp() {
     autoScale(opts = {}) {
       const maxWorkers = opts.maxWorkers || 8;
       const minWorkers = opts.minWorkers || 2;
-      setInterval(() => {
+      const timer = setInterval(() => {
         const mem = process.memoryUsage();
         if (mem.heapUsed > 200 * 1024 * 1024) {
           app.setWorkers(maxWorkers);
@@ -2617,6 +2707,7 @@ function createApp() {
           app.setWorkers(minWorkers);
         }
       }, opts.intervalMs || 5000);
+      if (timer.unref) timer.unref();
       return app;
     },
     printRoutes() {
@@ -2916,6 +3007,7 @@ function createApp() {
     },
     setPayloadLimit(n) { native.setPayloadLimit(h, n); return app; },
     setWorkers(n) { native.setWorkers(h, n); return app; },
+    cluster(opts) { if (opts?.workers) native.setWorkers(h, opts.workers); return app; },
     onError(fn) { onErr = fn; return app; },
     listen(port, hostOrCb, maybeCb) {
       let host = '0.0.0.0';
@@ -2937,6 +3029,7 @@ function createApp() {
   HTTP_METHODS.forEach((m) => {
     app[m] = (path, handler, options) => registerRoute(m, path, handler, options);
   });
+  app.del = app.delete;
 
   const dispatch = (routeId, ptr) => {
     const entry = routes[routeId];
@@ -3085,6 +3178,13 @@ export {
   loggerMiddleware as logger,
   maintenanceMiddleware as maintenance,
   methodOverrideMiddleware as methodOverride,
+  MethodNotAllowedError,
+  ConflictError,
+  UnprocessableEntityError,
+  TooManyRequestsError,
+  BadGatewayError,
+  ServiceUnavailableError,
+  GatewayTimeoutError,
   NotFoundError,
   rateLimitMiddleware as rateLimit,
   redirectorMiddleware as redirector,
@@ -3119,7 +3219,14 @@ Object.assign(velociradix, {
   UnauthorizedError,
   ForbiddenError,
   NotFoundError,
+  MethodNotAllowedError,
+  ConflictError,
+  UnprocessableEntityError,
+  TooManyRequestsError,
   InternalServerError,
+  BadGatewayError,
+  ServiceUnavailableError,
+  GatewayTimeoutError,
   ...middlewares,
 });
 

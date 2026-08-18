@@ -109,19 +109,16 @@ static std::vector<AddonApp*> g_apps;
 // Helpers
 // ---------------------------------------------------------------------------
 static std::string js_to_string(napi_env env, napi_value v) {
-    char buf[512];
-    size_t len = 0;
-    if (napi_get_value_string_utf8(env, v, buf, sizeof(buf), &len) == napi_ok) {
-        if (len < sizeof(buf) - 1) {
-            return std::string(buf, len);
-        }
-    }
     size_t needed = 0;
-    napi_get_value_string_utf8(env, v, nullptr, 0, &needed);
+    if (napi_get_value_string_utf8(env, v, nullptr, 0, &needed) != napi_ok || needed == 0) {
+        return "";
+    }
     std::string s(needed, '\0');
-    if (needed > 0) napi_get_value_string_utf8(env, v, &s[0], needed + 1, &needed);
+    size_t copied = 0;
+    napi_get_value_string_utf8(env, v, &s[0], needed + 1, &copied);
     return s;
 }
+
 
 static inline void mk_string(napi_env env, std::string_view s, napi_value* out) {
     napi_create_string_utf8(env, s.data(), s.size(), out);

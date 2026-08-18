@@ -7,6 +7,35 @@ All notable architectural milestones, feature additions, and versions of **Veloc
 
 ---
 
+## [v8.0.0] - 2026-08-18 🔒 SECURITY & RELIABILITY OVERHAUL
+
+> **BREAKING:** `encryptValue()`/`decryptValue()` upgraded from AES-256-CBC to AES-256-GCM (authenticated encryption). Existing CBC-encrypted values will not decrypt. Re-encrypt stored values after upgrading.
+
+### 🛡️ Security Hardening
+- **AES-256-GCM** authenticated encryption replaces AES-256-CBC.
+- **JWT `alg: none` bypass** blocked; full HS256/384/512 support.
+- **`setCookie()` URL-encodes** name & value.
+- **CSRF `secure: true`** on `_csrf` cookie.
+- **`sendFile({root})`** path traversal protection.
+- **Postman HTML XSS** — escapes `</script` and `<!--`.
+- **C++ SO_REUSEPORT** on Linux; expanded status phrases.
+
+### 🐛 Critical Fixes
+- **`sseInterval()` FIXED** — was silently broken due to atomic `responded` flag; rewired to `native.sseBegin()`.
+- **`compress()` method** was a no-op; now performs real gzip/deflate.
+- **`compress` middleware** hooks `ctx.send` before `next()` (was after).
+- **`jwtSign()` multi-algorithm** — now uses correct hash (SHA-384/512).
+- **`cookieParse()`** handles combined Set-Cookie headers from fetch API.
+- **Express bridge** removed premature `finished`/`headersSent` flags.
+
+### ✨ New Features
+- 7 new error classes: 405, 409, 422, 429, 502, 503, 504.
+- `app.cluster()` alias, `app.del()` alias.
+- 25+ new MIME types (svg, woff2, wasm, yaml, etc.).
+- `jwtVerify()` and `jwtAuth()` accept `algorithms` option.
+
+---
+
 ## [v7.6.1] - 2026-08-15 💎 MINIMALIST & PROFESSIONAL IDENTITY
 ### 🌟 Clean Systems Aesthetic
 - **Minimalist Transparent Vector Logo**: Replaced AI-generated mockups with an ultra-crisp, transparent vector SVG logo (`logo.svg`) reflecting the geometric Radix Trie and C++ speed engine.

@@ -1,4 +1,4 @@
-CXX = clang++
+CXX ?= $(shell which clang++ 2>/dev/null || which g++ 2>/dev/null || echo g++)
 CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -I src -fPIC
 LDFLAGS = -pthread
 
@@ -7,7 +7,7 @@ OBJ_DIR = obj
 BIN_DIR = bin
 TEST_DIR = tests
 
-NODE_INC = deps/node-v22.19.0/include/node
+NODE_INC ?= $(shell node -e "console.log(require('path').join(process.execPath, '..', '..', 'include', 'node'))" 2>/dev/null || echo deps/node-$(shell node -v | tr -d v)/include/node)
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)

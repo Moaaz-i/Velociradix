@@ -184,6 +184,8 @@ export interface BearerAuthOptions {
 export interface JwtAuthOptions {
   /** Secret key used to verify HMAC-SHA256 JWT signature */
   secret: string;
+  /** Allowed algorithms (default: ['HS256']) — pass ['HS256','HS384','HS512'] to allow all HMAC variants */
+  algorithms?: string[];
 }
 
 /** JWT Signing options */
@@ -481,12 +483,24 @@ export interface RouteOptions {
   query?: Array<{ key: string; value: string } | string>;
   /** Sample response payload */
   sampleResponse?: JsonValue;
+  /** Response definitions for API documentation */
+  responses?: Array<{ body?: JsonValue; code?: number; name?: string; status?: number }>;
+  /** Single response definition for API documentation */
+  response?: JsonValue;
+  /** HTTP status code for the response definition */
+  responseCode?: number;
+  /** Name for the response definition */
+  responseName?: string;
+  /** If true, route is hidden from API documentation */
+  internal?: boolean;
 }
 
 /** File serving options for `ctx.sendFile()` */
 export interface SendFileOptions {
   /** Custom Content-Type header */
   contentType?: string;
+  /** Root directory — when set, resolved file path must be inside this directory (prevents path traversal) */
+  root?: string;
 }
 
 /** Incoming HTTP Request object */
@@ -495,8 +509,6 @@ export interface Request {
   readonly method: string;
   /** Full URL path string */
   readonly url: string;
-  /** Original URL path string for proxy/Express compatibility */
-  readonly originalUrl: string;
   /** Path portion of URL */
   readonly path: string;
   /** Query string portion of URL */
@@ -505,28 +517,8 @@ export interface Request {
   readonly body: string;
   /** Key-value object of lowercased HTTP request headers */
   readonly headers: Record<string, string>;
-  /** Array of raw unparsed header key-value strings */
-  readonly rawHeaders: string[];
   /** Key-value object of route path parameters (e.g. `:id`) */
   readonly params: Record<string, string>;
-  /** Client IP address */
-  readonly ip: string;
-  /** Proxy IP address chain from X-Forwarded-For */
-  readonly ips: string[];
-  /** Request ID for correlation tracking */
-  readonly requestId: string;
-  /** True if request is HTTPS */
-  readonly secure: boolean;
-  /** True if request is AJAX / X-Requested-With: XMLHttpRequest */
-  readonly xhr: boolean;
-  /** HTTP Protocol version string (e.g. '1.1') */
-  readonly httpVersion: string;
-  /** Request start high-resolution timestamp */
-  readonly _startTime?: [number, number] | number;
-  /** Low-level socket reference */
-  readonly socket?: Socket;
-  /** Low-level connection reference */
-  readonly connection?: Socket;
   /** Get header value by case-insensitive name */
   get(name: string): string | undefined;
   /** Get header value by case-insensitive name (alias) */
@@ -572,7 +564,7 @@ export interface Response {
   /** Clears a cookie by setting Max-Age=0 */
   clearCookie(name: string, opts?: SetCookieOptions): this;
 
-  /** Encrypts data using AES-256-CBC and sets an encrypted cookie */
+  /** Encrypts data using AES-256-GCM and sets an encrypted cookie */
   setEncryptedCookie<T extends JsonValue = JsonValue>(name: string, value: T, secret: string, opts?: SetCookieOptions): this;
 
   /** Decrypts and parses an encrypted cookie */
@@ -702,7 +694,7 @@ export interface Context extends Response {
   jwtSign(payload: Record<string, string | number | boolean>, secret: string, opts?: JwtSignOptions): string;
 
   /** Verifies and decodes a Bearer JWT token from request headers */
-  jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(secret: string): T;
+  jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(secret: string, opts?: { algorithms?: string[] }): T;
 
   /** Generates or retrieves double-submit CSRF cookie token */
   csrfToken(): string;
@@ -817,7 +809,6 @@ export interface RouteGroup {
   post(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   put(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   delete(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
-  del(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   patch(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   head(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
   options(path: string, handler: Handler, options?: RouteOptions): RouteGroup;
@@ -931,7 +922,7 @@ export interface App {
   /** Registers callback function to execute on server graceful shutdown */
   onShutdown(fn: () => void | Promise<void>): App;
 
-  /** Scales application workers across CPU cluster cores */
+  /** Alias for setWorkers — scales C++ worker thread count */
   cluster(options?: { workers?: number }): App;
 
   /** File-system based automatic route registration (supports [id] params, [...slug] wildcards, and route middlewares) */
@@ -939,9 +930,6 @@ export interface App {
 
   /** Asynchronous file-system based automatic route registration that returns a Promise */
   autoRouteAsync(dirPath: string, basePrefix?: string): Promise<App>;
-
-  /** Registers a WebSocket upgrade route listener */
-  ws(path: string, handler?: (socket: { send: (msg: string) => void; broadcast: (msg: string) => void; close: () => void }, ctx: Context) => void): App;
 
   /** Registers a zero-dependency GraphQL endpoint query/mutation handler */
   graphql(path: string | Record<string, unknown>, schema?: string, resolvers?: Record<string, ((ctx: Context) => unknown) | unknown>): App;
@@ -1049,10 +1037,10 @@ export const app: App;
 /** Signs a JWT payload using HMAC-SHA256 */
 export function jwtSign(payload: Record<string, string | number | boolean>, secret: string, opts?: JwtSignOptions): string;
 /** Verifies and decodes a JWT token */
-export function jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(token: string, secret: string): T;
-/** Encrypts string text using AES-256-CBC */
+export function jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(token: string, secret: string, opts?: { algorithms?: string[] }): T;
+/** Encrypts string text using AES-256-GCM */
 export function encryptValue(text: string, secretKey: string): string;
-/** Decrypts encrypted text using AES-256-CBC */
+/** Decrypts encrypted text using AES-256-GCM */
 export function decryptValue(encryptedText: string, secretKey: string): string | undefined;
 
 /** Request logger middleware generator */
@@ -1138,7 +1126,14 @@ export interface VelociradixFactory {
   UnauthorizedError: typeof UnauthorizedError;
   ForbiddenError: typeof ForbiddenError;
   NotFoundError: typeof NotFoundError;
+  MethodNotAllowedError: typeof MethodNotAllowedError;
+  ConflictError: typeof ConflictError;
+  UnprocessableEntityError: typeof UnprocessableEntityError;
+  TooManyRequestsError: typeof TooManyRequestsError;
   InternalServerError: typeof InternalServerError;
+  BadGatewayError: typeof BadGatewayError;
+  ServiceUnavailableError: typeof ServiceUnavailableError;
+  GatewayTimeoutError: typeof GatewayTimeoutError;
   logger: typeof logger;
   cors: typeof cors;
   bearerAuth: typeof bearerAuth;

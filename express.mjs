@@ -1,4 +1,6 @@
 import { createApp, HttpError } from './index.mjs';
+import { existsSync as fsExists, readFileSync as fsRead, statSync as fsStat } from 'node:fs';
+import { join as pathJoin, extname as pathExtname, resolve as pathResolve } from 'node:path';
 
 /**
  * 1:1 Express Drop-in Replacement for Velociradix
@@ -230,7 +232,7 @@ export function express() {
   // HTTP Method verbs
   expressApp.post = function (path, ...handlers) { return expressApp._registerRoute('post', path, handlers); };
   expressApp.put = function (path, ...handlers) { return expressApp._registerRoute('put', path, handlers); };
-  expressApp.delete = function (path, ...handlers) { return expressApp._registerRoute('del', path, handlers); };
+  expressApp.delete = function (path, ...handlers) { return expressApp._registerRoute('delete', path, handlers); };
   expressApp.del = expressApp.delete;
   expressApp.patch = function (path, ...handlers) { return expressApp._registerRoute('patch', path, handlers); };
   expressApp.head = function (path, ...handlers) { return expressApp._registerRoute('head', path, handlers); };
@@ -287,23 +289,91 @@ export function express() {
 express.Router = Router;
 
 express.json = function json(options = {}) {
-  return (req, res, next) => next();
+  const limit = options.limit ?? '100kb';
+  return (req, res, next) => {
+    const ct = req.get('content-type') || '';
+    if (!ct.includes('application/json')) return next();
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      try {
+        req.body = JSON.parse(raw);
+      } catch {
+        req.body = undefined;
+      }
+      next();
+    });
+    req.on('error', next);
+  };
 };
 
 express.urlencoded = function urlencoded(options = {}) {
-  return (req, res, next) => next();
+  return (req, res, next) => {
+    const ct = req.get('content-type') || '';
+    if (!ct.includes('application/x-www-form-urlencoded')) return next();
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const params = new URLSearchParams(raw);
+      req.body = Object.fromEntries(params.entries());
+      next();
+    });
+    req.on('error', next);
+  };
 };
 
 express.text = function text(options = {}) {
-  return (req, res, next) => next();
+  return (req, res, next) => {
+    const ct = req.get('content-type') || '';
+    if (!ct.includes('text/plain')) return next();
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      req.body = raw;
+      next();
+    });
+    req.on('error', next);
+  };
 };
 
 express.raw = function raw(options = {}) {
-  return (req, res, next) => next();
+  return (req, res, next) => {
+    const chunks = [];
+    req.on('data', (chunk) => { chunks.push(chunk); });
+    req.on('end', () => {
+      req.body = Buffer.concat(chunks);
+      next();
+    });
+    req.on('error', next);
+  };
 };
 
 express.static = function staticMiddleware(dirPath, options = {}) {
-  return (req, res, next) => next();
+  const mimes = {
+    '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+    '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+    '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+    '.txt': 'text/plain', '.pdf': 'application/pdf',
+  };
+  return (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const filePath = pathResolve(dirPath, '.' + req.path);
+    if (!filePath.startsWith(pathResolve(dirPath))) return res.status(403).end('Forbidden');
+    if (!fsExists(filePath)) return next();
+    try {
+      const stat = fsStat(filePath);
+      if (stat.isDirectory()) return next();
+      const ext = pathExtname(filePath).toLowerCase();
+      const ct = mimes[ext] || 'application/octet-stream';
+      res.setHeader('Content-Type', ct);
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Cache-Control', `public, max-age=${options.maxAge || 0}`);
+      const data = fsRead(filePath);
+      res.end(data);
+    } catch {
+      next();
+    }
+  };
 };
 
 // Named Exports
