@@ -19,23 +19,23 @@ Velociradix includes precompiled native binaries (`prebuilds/`) for Linux (`x64`
 ## Basic Server Example
 
 ```js
-import { createApp, logger, helmet } from 'velociradix';
+import { createApp, logger, helmet } from "velociradix";
 
 const app = createApp();
 
 app.use(logger());
 app.use(helmet()); // for public cross-origin APIs: helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: 'cross-origin' })
 
-app.get('/', (ctx) => {
-  return { message: 'Hello from Velociradix!' };
+app.get("/", (ctx) => {
+  return { message: "Hello from Velociradix!" };
 });
 
-app.get('/users/:id', (ctx) => {
-  return { userId: ctx.params.id, search: ctx.query('q') };
+app.get("/users/:id", (ctx) => {
+  return { userId: ctx.params.id, search: ctx.query("q") };
 });
 
 app.listen(3000, () => {
-  console.log('⚡ Server running at http://localhost:3000');
+  console.log("⚡ Server running at http://localhost:3000");
 });
 ```
 
@@ -44,7 +44,7 @@ app.listen(3000, () => {
 ## TypeScript Usage
 
 ```ts
-import { createApp, Context, BadRequestError } from 'velociradix';
+import { createApp, Context, BadRequestError } from "velociradix";
 
 interface UserProfile {
   id: number;
@@ -53,12 +53,12 @@ interface UserProfile {
 
 const app = createApp();
 
-app.get('/users/:id', async (ctx: Context) => {
+app.get("/users/:id", async (ctx: Context) => {
   const id = Number(ctx.params.id);
   if (isNaN(id)) {
-    throw new BadRequestError('Invalid User ID');
+    throw new BadRequestError("Invalid User ID");
   }
-  const user: UserProfile = { id, name: 'Moaaz' };
+  const user: UserProfile = { id, name: "Moaaz" };
   return ctx.json(user);
 });
 

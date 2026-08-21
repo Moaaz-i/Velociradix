@@ -20,16 +20,17 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework**. Dri
 
 ### ⚡ Performance Comparison (HTTP GET req/s)
 
-| Framework | Requests / sec | Avg Latency | Relative Speed | Zero Dependencies |
-| :--- | :--- | :--- | :--- | :--- |
+| Framework                               | Requests / sec    | Avg Latency | Relative Speed   | Zero Dependencies   |
+| :-------------------------------------- | :---------------- | :---------- | :--------------- | :------------------ |
 | **🚀 Velociradix (C++17 Multi-Thread)** | **181,420 req/s** | **0.52 ms** | **11.2x faster** | **✅ Yes (0 deps)** |
-| Fastify (v4.28) | 52,300 req/s | 1.91 ms | 3.2x | ❌ No |
-| `node:http` (Native) | 48,100 req/s | 2.10 ms | 3.0x | ✅ Yes |
-| Express (v4.19 / v5) | 11,200 req/s | 8.92 ms | 1.0x (baseline) | ❌ No (30+ deps) |
+| Fastify (v4.28)                         | 52,300 req/s      | 1.91 ms     | 3.2x             | ❌ No               |
+| `node:http` (Native)                    | 48,100 req/s      | 2.10 ms     | 3.0x             | ✅ Yes              |
+| Express (v4.19 / v5)                    | 11,200 req/s      | 8.92 ms     | 1.0x (baseline)  | ❌ No (30+ deps)    |
 
 ---
+
+> 💎 **New in v8.1.1:**
 >
-> 💎 **New in v8.1.0:**
 > - **HTTP parser hardening**: request-smuggling defenses, Host requirement, TRACE/CONNECT rejection, header/URI caps, Slowloris timeout.
 > - **Constant-time JWT** (`timingSafeEqual`) plus `nbf`/`iss`/`aud`; AES-256-GCM IV/tag length checks.
 > - **Modern `helmet()`** (CSP, COOP, CORP, Permissions-Policy) and CORS that never pairs credentials with `origin: *`.
@@ -99,6 +100,7 @@ npx create-velociradix-app my-api --template rest-api
 ```
 
 Or initialize inside an existing folder:
+
 ```bash
 npx velociradix init
 ```
@@ -122,30 +124,30 @@ npm install velociradix@latest
 ### JavaScript (ES Modules)
 
 ```js
-import { createApp, logger, helmet } from 'velociradix';
+import { createApp, logger, helmet } from "velociradix";
 
 const app = createApp();
 
 app.use(logger());
 app.use(helmet());
 
-app.get('/', (ctx) => {
-  return { message: 'Hello from Velociradix v6.1!' };
+app.get("/", (ctx) => {
+  return { message: "Hello from Velociradix v6.1!" };
 });
 
-app.get('/users/:id', (ctx) => {
-  return { userId: ctx.params.id, query: ctx.query('search') };
+app.get("/users/:id", (ctx) => {
+  return { userId: ctx.params.id, query: ctx.query("search") };
 });
 
 app.listen(3000, () => {
-  console.log('⚡ Server running at http://localhost:3000');
+  console.log("⚡ Server running at http://localhost:3000");
 });
 ```
 
 ### TypeScript
 
 ```ts
-import velociradix, { Context, BadRequestError } from 'velociradix';
+import velociradix, { Context, BadRequestError } from "velociradix";
 
 interface UserProfile {
   id: number;
@@ -155,13 +157,13 @@ interface UserProfile {
 
 const app = velociradix();
 
-app.get('/users/:id', async (ctx: Context) => {
+app.get("/users/:id", async (ctx: Context) => {
   const id = Number(ctx.params.id);
   if (isNaN(id)) {
-    throw new BadRequestError('User ID must be a valid number');
+    throw new BadRequestError("User ID must be a valid number");
   }
 
-  const user: UserProfile = { id, name: 'Moaaz', role: 'admin' };
+  const user: UserProfile = { id, name: "Moaaz", role: "admin" };
   return ctx.json(user);
 });
 
@@ -177,7 +179,7 @@ app.listen(3000);
 Automatically introspect registered routes and host an interactive Swagger UI:
 
 ```js
-app.swagger('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
+app.swagger("/docs"); // Hosts Swagger UI at http://localhost:3000/docs
 ```
 
 ### 2. Postman UI Playground (`app.postmanDoc()`)
@@ -185,24 +187,30 @@ app.swagger('/docs'); // Hosts Swagger UI at http://localhost:3000/docs
 Hosts an interactive Postman API documentation & JSON collection download page:
 
 ```js
-app.postmanDoc('/postman-docs'); // Hosts Postman UI at http://localhost:3000/postman-docs
+app.postmanDoc("/postman-docs"); // Hosts Postman UI at http://localhost:3000/postman-docs
 ```
 
 ### 3. Zero-Dependency JWT Authentication (`jwtAuth()`)
 
 ```js
-import { jwtAuth, jwtSign } from 'velociradix';
+import { jwtAuth, jwtSign } from "velociradix";
 
 // Sign token
-app.post('/login', (ctx) => {
-  const token = ctx.jwtSign({ userId: 42, role: 'admin' }, 'super-secret-key', { expiresIn: 3600 });
+app.post("/login", (ctx) => {
+  const token = ctx.jwtSign({ userId: 42, role: "admin" }, "super-secret-key", {
+    expiresIn: 3600,
+  });
   return { token };
 });
 
 // Protect route
-app.get('/admin', (ctx) => {
-  return { user: ctx.state.user }; // Extracted from Bearer token
-}, { middlewares: [jwtAuth({ secret: 'super-secret-key' })] });
+app.get(
+  "/admin",
+  (ctx) => {
+    return { user: ctx.state.user }; // Extracted from Bearer token
+  },
+  { middlewares: [jwtAuth({ secret: "super-secret-key" })] },
+);
 ```
 
 ### 4. File Streaming with ETag & Range Requests (`ctx.sendFile()`)
@@ -210,17 +218,17 @@ app.get('/admin', (ctx) => {
 Supports `ETag`, `304 Not Modified`, and `206 Partial Content` for video/audio streaming:
 
 ```js
-app.get('/video.mp4', (ctx) => {
-  return ctx.sendFile('./media/video.mp4');
+app.get("/video.mp4", (ctx) => {
+  return ctx.sendFile("./media/video.mp4");
 });
 ```
 
 ### 5. Server-Sent Events (SSE) Streaming (`ctx.sse()`)
 
 ```js
-app.get('/events', (ctx) => {
+app.get("/events", (ctx) => {
   ctx.sse((stream) => {
-    stream.send({ event: 'ping', data: 'Connected to Velociradix SSE' });
+    stream.send({ event: "ping", data: "Connected to Velociradix SSE" });
     let count = 0;
     const timer = setInterval(() => {
       stream.send({ data: `Tick ${++count}` });
@@ -237,13 +245,13 @@ app.get('/events', (ctx) => {
 
 ```js
 // Encrypted cookies (AES-256-GCM)
-app.get('/set-secret', (ctx) => {
-  ctx.setEncryptedCookie('user_vault', { pin: 1234 }, 'cookie-secret-key');
+app.get("/set-secret", (ctx) => {
+  ctx.setEncryptedCookie("user_vault", { pin: 1234 }, "cookie-secret-key");
   return { ok: true };
 });
 
-app.get('/get-secret', (ctx) => {
-  const vault = ctx.getEncryptedCookie('user_vault', 'cookie-secret-key');
+app.get("/get-secret", (ctx) => {
+  const vault = ctx.getEncryptedCookie("user_vault", "cookie-secret-key");
   return { vault };
 });
 ```
@@ -254,28 +262,28 @@ Serves static or cached JSON/text responses **directly from native C++ memory** 
 
 ```js
 // Served directly in C++ memory — zero JS overhead, zero garbage collection
-app.fastGet('/health', { status: 'ok', uptime: 'healthy' });
-app.fastGet('/ping', 'pong');
-app.fastPost('/webhooks/dummy', { received: true });
+app.fastGet("/health", { status: "ok", uptime: "healthy" });
+app.fastGet("/ping", "pong");
+app.fastPost("/webhooks/dummy", { received: true });
 ```
 
 ### 8. Route Groups & Prefixing
 
 ```js
-app.group('/api/v1', (v1) => {
-  v1.get('/ping', (ctx) => ctx.send('pong'));
-  v1.get('/items', (ctx) => ctx.json([1, 2, 3]));
+app.group("/api/v1", (v1) => {
+  v1.get("/ping", (ctx) => ctx.send("pong"));
+  v1.get("/items", (ctx) => ctx.json([1, 2, 3]));
 });
 ```
 
 ### 9. Structured HTTP Error Classes
 
 ```js
-import { BadRequestError, NotFoundError, UnauthorizedError } from 'velociradix';
+import { BadRequestError, NotFoundError, UnauthorizedError } from "velociradix";
 
-app.get('/protected-data', (ctx) => {
-  if (!ctx.get('authorization')) {
-    throw new UnauthorizedError('Missing authorization header');
+app.get("/protected-data", (ctx) => {
+  if (!ctx.get("authorization")) {
+    throw new UnauthorizedError("Missing authorization header");
   }
 });
 ```
@@ -286,12 +294,12 @@ app.get('/protected-data', (ctx) => {
 
 ### 1. Framework Speed Challenge Benchmark (100 Connections, 10 Pipelining)
 
-| Framework / Mode | GET `/json` (RPS) | Avg Latency | Rank |
-| :--- | :---: | :---: | :---: |
-| 🚀 **Velociradix (`fastGet`)** | **114,490 req/sec** ⚡ | **8.26 ms** | 🥇 **#1 Winner** |
-| ⚡ **Fastify** | 41,605 req/sec | 23.55 ms | 🥈 #2 |
-| ⚡ **Velociradix (Standard)** | **19,915 req/sec** ⚡ | **50.26 ms** | 🥉 **#3 (nearly 2x Express)** |
-| 🐌 **Express** | 11,503 req/sec | 88.04 ms | #4 |
+| Framework / Mode               |   GET `/json` (RPS)    | Avg Latency  |             Rank              |
+| :----------------------------- | :--------------------: | :----------: | :---------------------------: |
+| 🚀 **Velociradix (`fastGet`)** | **114,490 req/sec** ⚡ | **8.26 ms**  |       🥇 **#1 Winner**        |
+| ⚡ **Fastify**                 |     41,605 req/sec     |   23.55 ms   |             🥈 #2             |
+| ⚡ **Velociradix (Standard)**  | **19,915 req/sec** ⚡  | **50.26 ms** | 🥉 **#3 (nearly 2x Express)** |
+| 🐌 **Express**                 |     11,503 req/sec     |   88.04 ms   |              #4               |
 
 > 💡 **Note:** Make sure to disable console logger middlewares (`logger()`) during production benchmarks to eliminate I/O stdout bottlenecks and achieve peak throughput.
 
@@ -301,15 +309,14 @@ app.get('/protected-data', (ctx) => {
 
 Velociradix provides cross-platform precompiled native modules:
 
-| OS | Architecture | Binary File | Status |
-| :--- | :--- | :--- | :--- |
-| **Linux** | `x64` | `prebuilds/linux-x64/velociradix.node` | ✅ Prebuilt |
-| **macOS** | `arm64` (Apple Silicon) | `prebuilds/darwin-arm64/velociradix.node` | ✅ Prebuilt |
-| **Windows** | `x64` | `prebuilds/win32-x64/velociradix.node` | ✅ Prebuilt |
+| OS          | Architecture            | Binary File                               | Status      |
+| :---------- | :---------------------- | :---------------------------------------- | :---------- |
+| **Linux**   | `x64`                   | `prebuilds/linux-x64/velociradix.node`    | ✅ Prebuilt |
+| **macOS**   | `arm64` (Apple Silicon) | `prebuilds/darwin-arm64/velociradix.node` | ✅ Prebuilt |
+| **Windows** | `x64`                   | `prebuilds/win32-x64/velociradix.node`    | ✅ Prebuilt |
 
 ---
 
 ## 📄 License
 
 Distributed under the **MIT License**. See [LICENSE](LICENSE) for more details.
-

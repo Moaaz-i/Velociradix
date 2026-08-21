@@ -7,6 +7,12 @@ All notable architectural milestones, feature additions, and versions of **Veloc
 
 ---
 
+## [v8.1.1] - 2026-08-21
+
+Docs for the C++ parser, JWT, `helmet()`, CORS, CSRF, and `sendFile()` now match the v8.1 engine behavior.
+
+---
+
 ## [v8.1.0] - 2026-08-21 🔒 PARSER HARDENING & CONSTANT-TIME CRYPTO
 
 ### Security

@@ -47,8 +47,8 @@ Velociradix solves this natively at the kernel level:
 You can specify the number of C++ worker threads directly using `app.setWorkers(count)`:
 
 ```js
-import os from 'node:os';
-import { createApp } from 'velociradix';
+import os from "node:os";
+import { createApp } from "velociradix";
 
 const app = createApp();
 
@@ -71,13 +71,13 @@ To maintain low latency and eliminate Garbage Collection (GC) pauses:
 
 ## 📊 3. Event Loop Comparison
 
-| Mechanism | Standard Node.js (`http`) | Velociradix Engine |
-| :--- | :--- | :--- |
-| **Socket Handling** | Single Thread (libuv) | Multi-Threaded C++ Workers (`kqueue`/`epoll`) |
-| **Header Parsing** | llhttp on JS thread | Zero-copy `string_view` on C++ worker thread |
-| **Route Matching** | JS String comparisons | Zero-allocation C++ Radix Trie |
-| **Fast-Path Support** | ❌ None | ✅ Direct C++ socket write (120,000+ req/s) |
-| **GC Overhead** | High (creates new objects per req) | Zero (recycled monomorphic Context pool) |
+| Mechanism             | Standard Node.js (`http`)          | Velociradix Engine                            |
+| :-------------------- | :--------------------------------- | :-------------------------------------------- |
+| **Socket Handling**   | Single Thread (libuv)              | Multi-Threaded C++ Workers (`kqueue`/`epoll`) |
+| **Header Parsing**    | llhttp on JS thread                | Zero-copy `string_view` on C++ worker thread  |
+| **Route Matching**    | JS String comparisons              | Zero-allocation C++ Radix Trie                |
+| **Fast-Path Support** | ❌ None                            | ✅ Direct C++ socket write (120,000+ req/s)   |
+| **GC Overhead**       | High (creates new objects per req) | Zero (recycled monomorphic Context pool)      |
 
 ---
 
@@ -91,4 +91,3 @@ The C++ HTTP parser runs on worker threads before any JavaScript handler:
 - Strips CR/LF/NUL from outbound header names and values.
 - Accepted sockets use `TCP_NODELAY` (Linux also `accept4` + `TCP_QUICKACK`) so small responses flush without Nagle delay.
 - Peer IPv4 is captured at `accept()` and exposed as `ctx.req.remoteAddress`.
-

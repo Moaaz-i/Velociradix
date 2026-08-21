@@ -109,17 +109,18 @@ Write your backend server with pure speed, and call it directly from your fronte
 <div>
 
 ### 🖥️ 1. Backend Server (`server.js`)
+
 ```javascript
-import { createApp } from 'velociradix';
+import { createApp } from "velociradix";
 
 const app = createApp();
 
 // Define routes with auto-validation
-app.get('/users/:id', (ctx) => {
+app.get("/users/:id", (ctx) => {
   return ctx.json({
     id: ctx.params.id,
-    name: 'Moaaz',
-    role: 'Admin'
+    name: "Moaaz",
+    role: "Admin",
   });
 });
 
@@ -131,14 +132,15 @@ app.listen(3000);
 <div>
 
 ### 📱 2. Frontend Client (`client.js`)
+
 ```javascript
-import { createClient } from 'velociradix/client';
+import { createClient } from "velociradix/client";
 
 // Zero URL boilerplate!
-const api = createClient('http://localhost:3000');
+const api = createClient("http://localhost:3000");
 
 // Path Chaining: GET /users/123
-const { data: user } = await api.users['123'].get();
+const { data: user } = await api.users["123"].get();
 
 console.log(user.name); // 'Moaaz'
 ```

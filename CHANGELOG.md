@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v8.1.1] - 2026-08-21
+
+### Docs
+- Security, architecture, middleware, Context, and troubleshooting guides aligned with the v8.1 parser and crypto hardening.
+
+---
+
 ## [v8.1.0] - 2026-08-21
 
 ### Security
