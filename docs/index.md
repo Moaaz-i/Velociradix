@@ -30,8 +30,8 @@ features:
     title: Type-Safe RPC Client SDK
     details: Zero-boilerplate proxy client (velociradix/client) with path chaining, query string formatting & token auth.
   - icon: 🛡️
-    title: 36+ Built-in Middlewares & Express Bridge
-    details: Built-in 1:1 Express 4/5 compatibility, Helmet, Rate Limit, CSRF, JWT, Cookies & Security Headers.
+    title: Hardened C++ Parser & Security Headers
+    details: Request-smuggling defenses, Slowloris timeout, constant-time JWT, AES-256-GCM cookies, Helmet CSP/COOP/CORP — built in, zero npm deps.
   - icon: 🏛️
     title: OOP Decorators & Microservices
     details: Clean NestJS-style decorators (@Controller, @Get, @Injectable) plus a high-throughput EventBus engine.

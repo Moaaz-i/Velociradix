@@ -29,12 +29,13 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework**. Dri
 
 ---
 >
-> 💎 **New in v7.5.2:**
-> - **Type-Safe RPC Client SDK (`velociradix/client`)**: End-to-end type-safe proxy client inspired by Eden Treaty & tRPC with path chaining (`client.users['123'].get()`), auto JSON serialization, query string formatting, token auth, and interceptors.
-> - **Microservices & EventBus Engine**: Built-in high-throughput event bus with wildcard subscriptions (`user.*`, `order.**`), async broadcasting, and Request-Reply RPC (`app.requestEvent()`).
-> - **OOP & Decorators Architecture (`velociradix/decorators`)**: Class-based controller decorators (`@Controller`, `@Get`, `@Post`, `@Body`, `@Param`, `@Query`, `@Use`, `@Injectable`).
-> - **Universal Schema Validation & Type Safety**: Native declarative route schemas supporting Zod, TypeBox, Valibot, custom rules, and automatic parameter sync with OpenAPI / Swagger UI.
-> - **1:1 Complete Express 4 / Express 5 API Compatibility** (`velociradix/express`).
+> 💎 **New in v8.1.0:**
+> - **HTTP parser hardening**: request-smuggling defenses, Host requirement, TRACE/CONNECT rejection, header/URI caps, Slowloris timeout.
+> - **Constant-time JWT** (`timingSafeEqual`) plus `nbf`/`iss`/`aud`; AES-256-GCM IV/tag length checks.
+> - **Modern `helmet()`** (CSP, COOP, CORP, Permissions-Policy) and CORS that never pairs credentials with `origin: *`.
+> - **Faster sockets**: `TCP_NODELAY`, Linux `accept4`, allocation-free Content-Length parse, ranged `sendFile` reads only the requested window.
+>
+> 💎 **Also in v7.5+:** Type-Safe RPC Client (`velociradix/client`), EventBus, OOP decorators, schema validation, and 1:1 Express 4/5 compatibility (`velociradix/express`).
 
 ---
 
@@ -47,7 +48,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework**. Dri
 - 🛡️ [Schema Validation & Type Safety](./docs/guide/validation.md)
 - 📁 [File-Based Routing (`autoRoute`)](./docs/guide/file-based-routing.md)
 - 🔄 [Express Middleware & Router Compatibility (`app.useExpress`)](./docs/guide/express-compat.md)
-- ⚙️ [36+ Built-in Middlewares](./docs/guide/middlewares.md)
+- 🛡️ [JWT, Crypto & HTTP Security](./docs/guide/security.md)
 - 🧪 [Postman & Swagger UI Integration](./docs/guide/postman-swagger.md)
 - ⚡ [Application API Reference (`app`)](./docs/api/app.md)
 - 📥 [Context API Reference (`ctx`)](./docs/api/context.md)
@@ -70,7 +71,7 @@ A **zero-dependency, ultra-fast C++17 HTTP engine & Node.js web framework**. Dri
 - 🛡️ **60+ Enterprise Features & Middlewares**:
   - **Middlewares (20+ Built-in)**: `logger()`, `helmet()`, `cors()`, `rateLimit()`, `slowDown()`, `cache()`, `sanitize()`, `validate()`, `ipFilter()`, `responseTime()`, `sizeLimit()`, `maintenance()`, `basicAuth()`, `csp()`, `timeout()`, `methodOverride()`, `apiKey()`, `allowedMethods()`, `headerInjector()`, `redirector()`, `concurrencyLimit()`, `etag()`, `userAgentBlocker()`, `bodyCleaner()`, `conditionalRequest()`, `hostGuard()`, `auditLog()`, `favicon()`.
   - **Zod & Schema First-Class Integration**: Direct schema object validation via `ctx.validate(zodSchema)` with `safeParse()` & `parse()` support out of the box.
-  - **Auth & Crypto**: HMAC-SHA256 JWT sign/verify, AES-256-CBC encrypted cookies, signed sessions.
+  - **Auth & Crypto**: HMAC-SHA256/384/512 JWT (constant-time verify), AES-256-GCM encrypted cookies, signed sessions.
   - **API Documentation**: Automatic OpenAPI 3.0 spec JSON generation & interactive Swagger UI at `/docs` or Postman UI at `/postman-docs` with external clean HTML templates (`src/postman.html`, `src/swagger.html`).
   - **I/O & Media**: `ctx.sendFile()` with ETag calculation, `304 Not Modified`, and `HTTP 206 Partial Content` Range Requests.
   - **Streaming**: Native Server-Sent Events (`SSE`) streaming (`ctx.sse()`).
@@ -235,7 +236,7 @@ app.get('/events', (ctx) => {
 ### 6. Encrypted Cookies & Sessions
 
 ```js
-// Encrypted cookies (AES-256-CBC)
+// Encrypted cookies (AES-256-GCM)
 app.get('/set-secret', (ctx) => {
   ctx.setEncryptedCookie('user_vault', { pin: 1234 }, 'cookie-secret-key');
   return { ok: true };

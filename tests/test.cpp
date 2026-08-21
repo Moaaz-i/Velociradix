@@ -1,6 +1,7 @@
 #include "velociradix.hpp"
 
 #include <arpa/inet.h>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -236,6 +237,24 @@ int main() {
         CHECK(buf.find("text/event-stream") != std::string::npos, "SSE content-type");
         CHECK(buf.find("event: update") != std::string::npos && buf.find("data:") != std::string::npos, "SSE event payload");
     }
+
+    body = simple_request("GET /hello HTTP/1.1\r\nConnection: close\r\n\r\n", status);
+    CHECK(status == 400, "HTTP/1.1 without Host -> 400");
+
+    body = simple_request("TRACE /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n", status);
+    CHECK(status == 405, "TRACE method rejected -> 405");
+
+    body = simple_request("GET /hello HTTP/1.1\r\nHost: t\r\nContent-Length: 1\r\nContent-Length: 2\r\nConnection: close\r\n\r\nx", status);
+    CHECK(status == 400, "conflicting Content-Length -> 400");
+
+    body = simple_request("POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello=world", status);
+    CHECK(status == 400, "Transfer-Encoding + Content-Length smuggling -> 400");
+
+    body = simple_request("GET /hello HTTP/1.1\r\nHost: t\r\nX-Inject: a\r\n b\r\nConnection: close\r\n\r\n", status);
+    CHECK(status == 400, "obs-fold header rejected -> 400");
+
+    body = simple_request("GET /hello HTTP/1.0\r\nConnection: close\r\n\r\n", status);
+    CHECK(status == 200 && body == "world", "HTTP/1.0 without Host still served");
 
     app.close();
     server.join();

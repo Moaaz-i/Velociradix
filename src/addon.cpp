@@ -45,7 +45,7 @@ struct PendingCall {
     bool keep_alive = true;
 
     int route_id = 0;
-    std::string method, path, query, body;
+    std::string method, path, query, body, remote_ip;
     std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> params;
 
@@ -68,6 +68,7 @@ static PendingCall* acquire_pending_call() {
         pc->path.clear();
         pc->query.clear();
         pc->body.clear();
+        pc->remote_ip.clear();
         pc->headers.clear();
         pc->params.clear();
         return pc;
@@ -237,8 +238,28 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
             if (ctx.req.path.size() != pl && ctx.req.path[pl] != '/') continue;
             std::string rest = std::string(ctx.req.path.substr(pl));
             while (!rest.empty() && rest[0] == '/') rest.erase(0, 1);
-            if (rest.find("..") != std::string::npos) continue; // traversal guard
-            std::string full = base + "/" + rest;
+            // Percent-decode so %2e%2e cannot bypass the traversal guard.
+            std::string decoded;
+            decoded.reserve(rest.size());
+            for (size_t i = 0; i < rest.size(); ++i) {
+                if (rest[i] == '%' && i + 2 < rest.size()) {
+                    auto hex = [](char c) -> int {
+                        if (c >= '0' && c <= '9') return c - '0';
+                        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                        return -1;
+                    };
+                    int hi = hex(rest[i + 1]), lo = hex(rest[i + 2]);
+                    if (hi >= 0 && lo >= 0) {
+                        decoded += (char)((hi << 4) | lo);
+                        i += 2;
+                        continue;
+                    }
+                }
+                decoded += rest[i];
+            }
+            if (decoded.find("..") != std::string::npos || decoded.find('\0') != std::string::npos) continue;
+            std::string full = base + "/" + decoded;
             if (::access(full.c_str(), R_OK) == 0) {
                 ctx.serve_file(full);
                 return;
@@ -256,6 +277,7 @@ static void cpp_handler(velociradix::Context& ctx, AddonApp* a, int route_id) {
     pc->path = ctx.req.path;
     pc->query = ctx.req.query_string;
     pc->body = ctx.req.body;
+    pc->remote_ip = ctx.conn ? velociradix::App::remote_ip(ctx.conn) : "0.0.0.0";
     pc->headers.reserve(ctx.req.headers.size());
     for (const auto& h : ctx.req.headers) {
         pc->headers.emplace_back(h.first, h.second);
@@ -332,6 +354,7 @@ static napi_value js_get_method(napi_env env, napi_callback_info info) { return 
 static napi_value js_get_path(napi_env env, napi_callback_info info) { return js_get_field(env, info, &PendingCall::path); }
 static napi_value js_get_query(napi_env env, napi_callback_info info) { return js_get_field(env, info, &PendingCall::query); }
 static napi_value js_get_body(napi_env env, napi_callback_info info) { return js_get_field(env, info, &PendingCall::body); }
+static napi_value js_get_remote_ip(napi_env env, napi_callback_info info) { return js_get_field(env, info, &PendingCall::remote_ip); }
 
 static napi_value js_get_headers(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -821,6 +844,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getPath", js_get_path },
         { "getQuery", js_get_query },
         { "getBody", js_get_body },
+        { "getRemoteIp", js_get_remote_ip },
         { "getHeaders", js_get_headers },
         { "getParams", js_get_params },
         { "getParam", js_get_param },

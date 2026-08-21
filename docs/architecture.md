@@ -79,3 +79,16 @@ To maintain low latency and eliminate Garbage Collection (GC) pauses:
 | **Fast-Path Support** | ❌ None | ✅ Direct C++ socket write (120,000+ req/s) |
 | **GC Overhead** | High (creates new objects per req) | Zero (recycled monomorphic Context pool) |
 
+---
+
+## 🛡️ 4. Parser Hardening & Socket Tuning
+
+The C++ HTTP parser runs on worker threads before any JavaScript handler:
+
+- Rejects request smuggling (`Content-Length` conflicts, `Transfer-Encoding` + `Content-Length`, obs-fold, LF-only framing).
+- Requires `Host` on HTTP/1.1; rejects `TRACE`/`CONNECT`; caps header block (32 KiB / 100 headers) and URI length (8 KiB).
+- Closes Slowloris connections after 10s of incomplete headers; max 16,384 connections per worker.
+- Strips CR/LF/NUL from outbound header names and values.
+- Accepted sockets use `TCP_NODELAY` (Linux also `accept4` + `TCP_QUICKACK`) so small responses flush without Nagle delay.
+- Peer IPv4 is captured at `accept()` and exposed as `ctx.req.remoteAddress`.
+

@@ -24,7 +24,7 @@ import { createApp, logger, helmet } from 'velociradix';
 const app = createApp();
 
 app.use(logger());
-app.use(helmet());
+app.use(helmet()); // for public cross-origin APIs: helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: 'cross-origin' })
 
 app.get('/', (ctx) => {
   return { message: 'Hello from Velociradix!' };

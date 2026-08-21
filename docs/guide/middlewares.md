@@ -42,22 +42,26 @@ app.use(logger({ includeRes: true }));
 ---
 
 ### 2. `helmet(options?)`
-Injects essential HTTP security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-XSS-Protection`, `Referrer-Policy`, `HSTS`).
+Injects modern HTTP security headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `HSTS`, `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, `Permissions-Policy`. `X-XSS-Protection` is set to `0` (the XSS auditor is harmful in legacy browsers).
 - `frameOptions`: Frame options header value (default: `'SAMEORIGIN'`)
 - `referrerPolicy`: Referrer policy (default: `'no-referrer'`)
+- `contentSecurityPolicy`: CSP string, or `false` to disable (default: restrictive `default-src 'self'`)
+- `crossOriginResourcePolicy`: default `'same-origin'` — set `'cross-origin'` for public APIs consumed from other origins
+- `hsts` / `hstsMaxAge` / `hstsPreload`
 
 ```javascript
 app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: 'cross-origin' }));
 ```
 
 ---
 
 ### 3. `cors(options?)`
 Configures Cross-Origin Resource Sharing and handles `OPTIONS` preflight requests automatically.
-- `origin`: Allowed origin string or array (default: `'*'`)
+- `origin`: Allowed origin string, array, `true` (reflect request Origin), or function (default: `'*'`)
 - `methods`: Allowed HTTP methods (default: `'GET,POST,PUT,DELETE,PATCH,OPTIONS'`)
-- `headers`: Allowed header names
-- `credentials`: Support cookies & authorization headers (`true` | `false`)
+- `headers`: Allowed request header names
+- `credentials`: Support cookies & authorization headers (`true` | `false`). Never sent together with `Access-Control-Allow-Origin: *`.
 
 ```javascript
 app.use(cors({ origin: 'https://example.com', credentials: true }));
@@ -70,6 +74,7 @@ Sliding-window IP rate limiter to protect against spam and denial-of-service.
 - `windowMs`: Time window in milliseconds (default: `60000`)
 - `max`: Maximum requests allowed per IP in the window (default: `100`)
 - `message`: Custom error payload on limit exceeded
+- `maxKeys`: Cap on unique tracked IPs to prevent memory exhaustion (default: `10000`)
 
 ```javascript
 app.use(rateLimit({ windowMs: 60 * 1000, max: 100 }));
@@ -99,11 +104,13 @@ app.use(slowDown({ delayAfter: 10, delayMs: 200 }));
 ---
 
 ### 7. `jwtAuth(options)`
-HMAC-SHA256 JWT Token verification middleware. Parses `Authorization: Bearer <token>`, verifies signature & expiration, and attaches the payload to `ctx.state.user`.
-- `secret`: Secret key used for signature verification (Required).
+HMAC JWT verification (`HS256` default; `HS384`/`HS512` optional). Constant-time signature compare, blocks `alg: none`, checks `exp`/`nbf`, and attaches the payload to `ctx.state.user`.
+- `secret`: HMAC secret (required).
+- `algorithms`: Allowed algs (default: `['HS256']`).
+- `issuer` / `audience`: Optional claim checks.
 
 ```javascript
-app.use('/admin/*', jwtAuth({ secret: 'my-super-secret-key' }));
+app.use('/admin/*', jwtAuth({ secret: process.env.JWT_SECRET }));
 ```
 
 ---
@@ -153,7 +160,7 @@ app.use('/public-api/*', cache({ ttlMs: 30000 }));
 ---
 
 ### 12. `session(options)`
-AES-256-CBC encrypted, cookie-backed user session store.
+AES-256-GCM encrypted, cookie-backed user session store (`HttpOnly`, `SameSite=Lax` by default).
 - `secret`: Encryption secret key.
 - `name`: Session cookie name (default: `'_session'`).
 
@@ -164,11 +171,11 @@ app.use(session({ secret: 'secure-session-key-32-chars!!' }));
 ---
 
 ### 13. `csrf(options?)`
-Cross-Site Request Forgery protection with token generation and header/body validation.
-- `secret`: Secret key for token signing.
+Double-submit CSRF cookie with constant-time header compare and `Origin` host match. Clients must send `X-CSRF-Token` (query-string tokens are ignored).
+- `headerName`: Header carrying the token (default: `'x-csrf-token'`).
 
 ```javascript
-app.use(csrf({ secret: 'csrf-secret-key' }));
+app.use(csrf());
 ```
 
 ---

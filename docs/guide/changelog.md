@@ -7,6 +7,20 @@ All notable architectural milestones, feature additions, and versions of **Veloc
 
 ---
 
+## [v8.1.0] - 2026-08-21 🔒 PARSER HARDENING & CONSTANT-TIME CRYPTO
+
+### Security
+- HTTP request-smuggling defenses (duplicate/conflicting `Content-Length`, TE+CL, obs-fold, missing Host, TRACE/CONNECT).
+- Header/URI size caps, Slowloris idle timeout, connection cap, CR/LF header stripping.
+- JWT constant-time verify + `nbf`/`iss`/`aud`; AES-GCM IV/tag length checks.
+- Modern `helmet()` (CSP, COOP, CORP); CORS credentials never pair with `*`.
+- Prototype-pollution-safe query/cookie parse; bounded multipart uploads; safe `sendFile` ranges.
+
+### Performance
+- `TCP_NODELAY` + Linux `accept4`; allocation-free Content-Length parse; ranged `sendFile` reads only the requested window.
+
+---
+
 ## [v8.0.0] - 2026-08-18 🔒 SECURITY & RELIABILITY OVERHAUL
 
 > **BREAKING:** `encryptValue()`/`decryptValue()` upgraded from AES-256-CBC to AES-256-GCM (authenticated encryption). Existing CBC-encrypted values will not decrypt. Re-encrypt stored values after upgrading.

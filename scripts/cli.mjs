@@ -53,7 +53,7 @@ const packageJson = {
     dev: isTs ? 'tsc --watch' : 'node --watch index.mjs'
   },
   dependencies: {
-    velociradix: '^8.0.0'
+    velociradix: '^8.1.0'
   },
   devDependencies: isTs ? {
     typescript: '^5.0.0',

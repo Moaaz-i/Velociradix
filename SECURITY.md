@@ -6,7 +6,8 @@ Only the latest major version of Velociradix receives security updates.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 7.x     | :white_check_mark: |
+| 8.x     | :white_check_mark: |
+| 7.x     | :x:                |
 | < 7.0   | :x:                |
 
 ## Reporting a Vulnerability

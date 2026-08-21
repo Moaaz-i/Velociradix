@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v8.1.0] - 2026-08-21
+
+### Security
+- HTTP parser rejects request smuggling: conflicting `Content-Length`, `Transfer-Encoding` + `Content-Length`, obs-fold headers, LF-only framing, missing `Host` on HTTP/1.1, `TRACE`/`CONNECT`.
+- Header block cap (32 KiB / 100 headers), URI cap (8 KiB), Slowloris idle timeout (10s), max 16384 connections per worker.
+- Response header CR/LF/NUL stripping (C++ and JS) to block header injection.
+- Static file serving uses prefix-safe canonical path checks; no fallback to uncanonicalized paths.
+- JWT `jwtVerify()` uses `timingSafeEqual`, enforces `nbf`/`iss`/`aud`, rejects empty secrets and oversized tokens.
+- AES-256-GCM decrypt validates IV (12) and auth tag (16) lengths.
+- `helmet()` ships COOP/CORP/CSP/Permissions-Policy; `X-XSS-Protection` set to `0`.
+- CORS never pairs `credentials` with `origin: *`; query/cookie parsers are prototype-pollution safe.
+- CSRF uses constant-time compare + Origin check; session cookies default to `HttpOnly` + `SameSite=Lax`.
+- `sendFile()` range requests are bounds-checked (416) and read by offset; `serveStatic()` path check uses `path.isAbsolute`.
+- Multipart uploads cap files/fields/size and write only basename-sanitized names under `uploadDir`.
+
+### Performance
+- `TCP_NODELAY` (and Linux `accept4` + `TCP_QUICKACK`) on accepted sockets.
+- Content-Length parsed without heap allocation; header names already lowercased skip extra copies on the write path.
+- Range `sendFile()` reads only the requested byte window.
+
+---
+
 ## [v8.0.0] - 2026-08-18
 
 > **BREAKING CHANGE:** `encryptValue()`/`decryptValue()` upgraded from AES-256-CBC to AES-256-GCM (authenticated encryption). Existing CBC-encrypted values will not decrypt with GCM. Re-encrypt any stored values after upgrading.

@@ -31,6 +31,7 @@ struct Request {
     std::string_view query_string; // raw "a=1&b=2"
     std::string_view http_version; // "HTTP/1.1"
     std::string_view body;
+    const char* remote_addr = "";  // dotted IPv4 from accept(), valid for the request lifetime
 
     std::string_view header(std::string_view name) const; // lowercase name
     std::string query(std::string_view key) const;
@@ -148,6 +149,8 @@ public:
     // release exactly one reference per hold (respond_async releases one).
     void hold_conn(Conn* c);
     void release_conn(Conn* c);
+    // Peer IPv4 address captured at accept(). Valid while the Conn is alive.
+    static const char* remote_ip(Conn* c);
     // Worker-thread only: assigns the next per-connection request sequence.
     uint64_t alloc_seq(Conn* c);
     void respond_async(Conn* c, uint64_t seq, int status,

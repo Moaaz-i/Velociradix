@@ -21,8 +21,9 @@ Direct reference to the low-level `Request` wrapper object containing parsed req
 | `ctx.method` | `string` | HTTP Method string (`'GET'`, `'POST'`, `'PUT'`, etc.). |
 | `ctx.query(key)` | `string` | Returns parsed URL query string parameter value. |
 | `ctx.params` | `Record<string, string>` | Key-value object of route path parameters (e.g. `:id`). |
-| `ctx.ip` | `string` | Resolved client IP address (supports `setTrustProxy`). |
-| `ctx.ips` | `string[]` | Array of proxy IP addresses from `X-Forwarded-For`. |
+| `ctx.ip` | `string` | TCP peer from `accept()`, or first `X-Forwarded-For` hop when `setTrustProxy(true)`. |
+| `ctx.ips` | `string[]` | Proxy addresses from `X-Forwarded-For` (empty unless trust proxy is on). |
+| `ctx.req.remoteAddress` | `string` | Spoof-resistant TCP peer captured at accept. |
 | `ctx.requestId` | `string` | Unique request correlation ID (`X-Request-ID`). |
 
 ---
@@ -116,16 +117,17 @@ return ctx.send('Plain text response');
 ---
 
 ### `ctx.sendFile(filepath, opts?)`
-Serves a static file from disk with ETag calculation, `304 Not Modified`, and `HTTP 206 Partial Content` Byte-Range Request support.
+Serves a file with ETag, `304 Not Modified`, and `HTTP 206` range requests. Ranges are bounds-checked (`416` if unsatisfiable) and only the requested window is read. Pass `{ root }` when the path is user-influenced so the resolved file must stay inside that directory.
 
 ```javascript
 return ctx.sendFile('./uploads/report.pdf');
+return ctx.sendFile(ctx.params.file, { root: './uploads' });
 ```
 
 ---
 
 ### `ctx.setCookie(name, value, options?)`
-Sets a `Set-Cookie` response header.
+Sets a `Set-Cookie` header. Name and value are URL-encoded; CR/LF are stripped. Defaults: `Path=/`, `SameSite=Lax`.
 
 ```javascript
 ctx.setCookie('sid', '123456', { httpOnly: true, secure: true, maxAge: 3600 });

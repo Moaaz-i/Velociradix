@@ -4,6 +4,7 @@
 #include "velociradix.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -55,12 +56,14 @@ static WSAInit g_wsa_init;
 #ifdef __APPLE__
 #include <sys/event.h>
 #include <sys/time.h>
+#include <netinet/tcp.h>
 #include <mach/thread_policy.h>
 #include <mach/thread_act.h>
 #elif defined(_WIN32)
 // Windows socket polling fallback
 #else
 #include <sys/epoll.h>
+#include <netinet/tcp.h>
 #include <sched.h>
 #include <pthread.h>
 #endif
@@ -171,20 +174,70 @@ static void to_lower(std::string& s) {
     for (auto& c : s) c = (char)std::tolower((unsigned char)c);
 }
 
-static void split_path(const std::string& p, std::vector<std::string>& segs) {
+static void split_path(std::string_view p, std::vector<std::string>& segs) {
     segs.clear();
     size_t i = 1;
     while (i < p.size()) {
         size_t slash = p.find('/', i);
-        size_t end = (slash == std::string::npos) ? p.size() : slash;
+        size_t end = (slash == std::string_view::npos) ? p.size() : slash;
         if (end > i) {
-            std::string seg(p, i, end - i);
+            std::string seg(p.substr(i, end - i));
             if (seg.find('%') != std::string::npos) seg = url_decode(seg);
+            if (seg.find('\0') != std::string::npos) {
+                segs.clear();
+                return;
+            }
             segs.push_back(std::move(seg));
         }
-        if (slash == std::string::npos) break;
+        if (slash == std::string_view::npos) break;
         i = slash + 1;
     }
+}
+
+// RFC 7230 tchar — used for methods and header names.
+static bool is_tchar(unsigned char c) {
+    return std::isalnum(c) || c == '!' || c == '#' || c == '$' || c == '%' ||
+           c == '&' || c == '\'' || c == '*' || c == '+' || c == '-' ||
+           c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
+}
+
+static bool parse_content_length(std::string_view s, size_t& out) {
+    if (s.empty() || s.size() > 20) return false;
+    size_t n = 0;
+    for (unsigned char c : s) {
+        if (c < '0' || c > '9') return false;
+        size_t d = (size_t)(c - '0');
+        if (n > (SIZE_MAX - d) / 10) return false;
+        n = n * 10 + d;
+    }
+    out = n;
+    return true;
+}
+
+// Strip CR/LF/NUL (and ':' in names) so user-controlled values cannot split HTTP responses.
+static void append_http_header(std::string& o, std::string_view name, std::string_view value) {
+    for (unsigned char c : name) {
+        if (c == '\r' || c == '\n' || c == '\0' || c == ':') continue;
+        o += (char)c;
+    }
+    o += ": ";
+    for (unsigned char c : value) {
+        if (c == '\r' || c == '\n' || c == '\0') continue;
+        o += (char)c;
+    }
+    o += "\r\n";
+}
+
+static bool path_is_inside(const std::string& resolved, const std::string& root) {
+    if (root.empty() || resolved.size() < root.size()) return false;
+    if (resolved.compare(0, root.size(), root) != 0) return false;
+    if (resolved.size() == root.size()) return true;
+    char sep = resolved[root.size()];
+    return sep == '/'
+#ifdef _WIN32
+        || sep == '\\'
+#endif
+        ;
 }
 
 static void append_uint(std::string& o, size_t v) {
@@ -418,93 +471,123 @@ void Context::redirect(const std::string& location, int code) {
 
 // ---------------------------------------------------------------------------
 // HTTP request parser
-// Returns bytes consumed; 0 = need more data; -1 = malformed.
+// Returns bytes consumed; 0 = need more data; -1 = malformed (400);
+// -2 = header block too large (431); -3 = URI too long (414); -4 = method not allowed (405).
 // ---------------------------------------------------------------------------
+static constexpr size_t MAX_HEADER_BLOCK = 32 * 1024;
+static constexpr size_t MAX_URI_LEN = 8192;
+static constexpr size_t MAX_HEADER_COUNT = 100;
+static constexpr size_t MAX_METHOD_LEN = 16;
+
 static long parse_request(char* data, size_t len, Request& req) {
     if (len < 4) return 0;
-    
+
     std::string_view sv(data, len);
     size_t header_end_pos = sv.find("\r\n\r\n");
-    if (header_end_pos == std::string_view::npos) return 0; // incomplete header
-    
-    const char* he = data + header_end_pos;
-    const char* end = he;
-    // request line: METHOD SP TARGET SP VERSION
+    if (header_end_pos == std::string_view::npos) {
+        if (len > MAX_HEADER_BLOCK) return -2;
+        if (sv.find("\n\n") != std::string_view::npos) return -1;
+        return 0;
+    }
+    if (header_end_pos > MAX_HEADER_BLOCK) return -2;
+
+    const char* end = data + header_end_pos;
     const char* p = data;
     const char* sp1 = (const char*)memchr(p, ' ', (size_t)(end - p));
     if (!sp1) return -1;
-    req.method = std::string_view(p, sp1 - p);
+    size_t method_len = (size_t)(sp1 - p);
+    if (method_len == 0 || method_len > MAX_METHOD_LEN) return -1;
+    for (size_t i = 0; i < method_len; ++i) {
+        if (!is_tchar((unsigned char)p[i])) return -1;
+    }
+    req.method = std::string_view(p, method_len);
+    if (req.method == "TRACE" || req.method == "CONNECT") return -4;
+
     p = sp1 + 1;
     const char* sp2 = (const char*)memchr(p, ' ', (size_t)(end - p));
     if (!sp2) return -1;
-    const char* ts = p;
-    const char* qmark = (const char*)memchr(ts, '?', (size_t)(sp2 - ts));
-    if (!qmark) {
-        const char* qenc = nullptr;
-        for (const char* k = ts; k + 2 < sp2; ++k) {
-            if (*k == '%' && k[1] == '3' && (k[2] == 'F' || k[2] == 'f')) {
-                qenc = k;
-                break;
-            }
-        }
-        if (qenc) {
-            req.path = std::string_view(ts, qenc - ts);
-            req.query_string = std::string_view(qenc + 3, sp2 - (qenc + 3));
-        } else {
-            req.path = std::string_view(ts, sp2 - ts);
-            req.query_string = std::string_view();
-        }
-    } else {
-        req.path = std::string_view(ts, qmark - ts);
-        req.query_string = std::string_view(qmark + 1, (sp2 - qmark) - 1);
+    size_t target_len = (size_t)(sp2 - p);
+    if (target_len == 0) return -1;
+    if (target_len > MAX_URI_LEN) return -3;
+    for (const char* k = p; k < sp2; ++k) {
+        unsigned char c = (unsigned char)*k;
+        if (c < 0x20 || c == 0x7F) return -1;
     }
+    const char* ts = p;
+    const char* qmark = (const char*)memchr(ts, '?', target_len);
+    if (!qmark) {
+        req.path = std::string_view(ts, target_len);
+        req.query_string = std::string_view();
+    } else {
+        req.path = std::string_view(ts, (size_t)(qmark - ts));
+        req.query_string = std::string_view(qmark + 1, (size_t)(sp2 - (qmark + 1)));
+    }
+    if (req.path.empty() || req.path[0] != '/') return -1;
+
     p = sp2 + 1;
     const char* le = (const char*)memchr(p, '\r', (size_t)(end - p));
-    if (!le) return -1;
-    req.http_version = std::string_view(p, le - p);
+    if (!le || le[1] != '\n') return -1;
+    req.http_version = std::string_view(p, (size_t)(le - p));
+    if (req.http_version != "HTTP/1.1" && req.http_version != "HTTP/1.0") return -1;
 
-    // headers
+    req.headers.clear();
+    req.headers.reserve(16);
     char* h = const_cast<char*>(le + 2);
+    bool saw_host = false;
+    bool saw_cl = false;
+    bool saw_te = false;
+    size_t content_length = 0;
     while (h < end) {
-        // The last header line's '\r' sits exactly at `end`, so the search range
-        // must include `end` itself.
         const char* line_end = (const char*)memchr(h, '\r', (size_t)(end - h) + 1);
         if (!line_end || line_end[1] != '\n') return -1;
-        const char* colon = (const char*)memchr(h, ':', (size_t)(line_end - h));
-        if (colon) {
-            size_t name_len = colon - h;
-            for (size_t k = 0; k < name_len; ++k) h[k] = (char)std::tolower((unsigned char)h[k]);
-            std::string_view name(h, name_len);
-            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.remove_suffix(1);
-
-            const char* vs = colon + 1;
-            while (vs < line_end && (*vs == ' ' || *vs == '\t')) ++vs;
-            std::string_view value(vs, line_end - vs);
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
-            
-            req.headers.emplace_back(name, value);
+        size_t line_len = (size_t)(line_end - h);
+        if (line_len == 0) break;
+        if (h[0] == ' ' || h[0] == '\t') return -1; // obs-fold smuggling
+        const char* colon = (const char*)memchr(h, ':', line_len);
+        if (!colon) return -1;
+        size_t name_len = (size_t)(colon - h);
+        if (name_len == 0) return -1;
+        for (size_t k = 0; k < name_len; ++k) {
+            if (!is_tchar((unsigned char)h[k])) return -1;
+            h[k] = (char)std::tolower((unsigned char)h[k]);
         }
+        std::string_view name(h, name_len);
+
+        const char* vs = colon + 1;
+        while (vs < line_end && (*vs == ' ' || *vs == '\t')) ++vs;
+        std::string_view value(vs, (size_t)(line_end - vs));
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
+        for (unsigned char c : value) {
+            if (c == '\0' || c == '\r' || c == '\n') return -1;
+        }
+
+        if (req.headers.size() >= MAX_HEADER_COUNT) return -2;
+
+        if (name == "host") {
+            if (saw_host) return -1;
+            saw_host = true;
+        } else if (name == "content-length") {
+            size_t cl = 0;
+            if (!parse_content_length(value, cl)) return -1;
+            if (saw_cl && cl != content_length) return -1;
+            saw_cl = true;
+            content_length = cl;
+        } else if (name == "transfer-encoding") {
+            saw_te = true;
+            if (saw_cl) return -1;
+            if (value.find("chunked") != std::string_view::npos) return -1;
+        }
+
+        req.headers.emplace_back(name, value);
         h = const_cast<char*>(line_end + 2);
     }
 
-    // body
-    size_t content_length = 0;
-    for (const auto& hd : req.headers) {
-        if (hd.first == "content-length") {
-            try {
-                // std::stoul requires null terminated, but string_view isn't. So we copy it.
-                content_length = (size_t)std::stoul(std::string(hd.second));
-            } catch (...) {
-                return -1;
-            }
-        } else if (hd.first == "transfer-encoding") {
-            if (hd.second.find("chunked") != std::string_view::npos) {
-                return -1; // chunked not supported, return malformed to trigger 400
-            }
-        }
-    }
+    if (req.http_version == "HTTP/1.1" && !saw_host) return -1;
+    if (saw_te && saw_cl) return -1;
+
     size_t consumed = (size_t)(end - data) + 4;
-    if (consumed + content_length > len) return 0; // need body
+    if (content_length > SIZE_MAX - consumed) return -1;
+    if (consumed + content_length > len) return 0;
     req.body = std::string_view(data + consumed, content_length);
     return (long)(consumed + content_length);
 }
@@ -667,6 +750,8 @@ struct Conn {
     uint64_t next_req_seq = 1;
     uint64_t next_resp_seq = 1;
     std::unordered_map<uint64_t, std::string> pending_resp;
+    char remote_ip[48] = "0.0.0.0";
+    std::chrono::steady_clock::time_point last_recv{};
 
     void append(const char* data, size_t len) {
         std::lock_guard<std::mutex> lk(wmtx);
@@ -752,10 +837,17 @@ static bool ev_add(int loop, int fd, bool r, bool w) {
 #endif
 }
 
-static int ev_wait(int loop, ev_event* evs, int max) {
+static int ev_wait(int loop, ev_event* evs, int max, int timeout_ms) {
 #ifdef __APPLE__
     struct kevent out[256];
-    int n = kevent(loop, nullptr, 0, out, std::min(max, 256), nullptr);
+    struct timespec ts;
+    struct timespec* tsp = nullptr;
+    if (timeout_ms >= 0) {
+        ts.tv_sec = timeout_ms / 1000;
+        ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+        tsp = &ts;
+    }
+    int n = kevent(loop, nullptr, 0, out, std::min(max, 256), tsp);
     for (int i = 0; i < n; ++i) {
         evs[i].fd = (int)out[i].ident;
         evs[i].err = (out[i].flags & EV_ERROR) != 0;
@@ -773,7 +865,14 @@ static int ev_wait(int loop, ev_event* evs, int max) {
         w = wl->write_fds;
         max_fd = wl->max_fd;
     }
-    int n = select(max_fd + 1, &r, &w, nullptr, nullptr);
+    struct timeval tv;
+    struct timeval* tvp = nullptr;
+    if (timeout_ms >= 0) {
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        tvp = &tv;
+    }
+    int n = select(max_fd + 1, &r, &w, nullptr, tvp);
     if (n <= 0) return n;
     
     int count = 0;
@@ -791,7 +890,7 @@ static int ev_wait(int loop, ev_event* evs, int max) {
     return count;
 #else
     struct epoll_event out[256];
-    int n = epoll_wait(loop, out, std::min(max, 256), -1);
+    int n = epoll_wait(loop, out, std::min(max, 256), timeout_ms);
     for (int i = 0; i < n; ++i) {
         evs[i].fd = out[i].data.fd;
         evs[i].err = (out[i].events & (EPOLLERR | EPOLLHUP)) != 0;
@@ -881,6 +980,9 @@ struct App::Worker {
     int listen_fd = -1;
     int wake_pipe[2] = { -1, -1 };
     std::vector<Conn*> conns;
+    size_t active_conns_ = 0;
+    static constexpr size_t MAX_CONNS = 16384;
+    static constexpr int HEADER_TIMEOUT_MS = 10000;
 
     explicit Worker(App* a, int lfd) : app(a), listen_fd(lfd) {}
 
@@ -906,6 +1008,22 @@ struct App::Worker {
     }
     void request_write_off(int fd) { ev_mod(loop_fd, fd, true, false); }
 
+    void sweep_timeouts() {
+        auto now = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < conns.size(); ++i) {
+            Conn* c = conns[i];
+            if (!c || c->streaming.load() || c->closed.load()) continue;
+            if (c->in.size() <= c->consumed) continue; // no incomplete request
+            auto idle = std::chrono::duration_cast<std::chrono::milliseconds>(now - c->last_recv).count();
+            if (idle > HEADER_TIMEOUT_MS) {
+                send_error(c, 408, "Request Timeout");
+                c->want_close = true;
+                flush(c);
+                close_conn((int)i, c);
+            }
+        }
+    }
+
     void run() {
         ignore_sigpipe();
 
@@ -923,12 +1041,19 @@ struct App::Worker {
         ev_add(loop_fd, listen_fd, true, false);
 
         ev_event events[256];
+        auto last_sweep = std::chrono::steady_clock::now();
         while (app->running_.load()) {
-            int n = ev_wait(loop_fd, events, 256);
+            int n = ev_wait(loop_fd, events, 256, 1000);
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_sweep >= std::chrono::seconds(1)) {
+                sweep_timeouts();
+                last_sweep = now;
+            }
             if (n < 0) {
                 if (errno == EINTR) continue;
                 break;
             }
+            if (n == 0) continue;
             for (int i = 0; i < n; ++i) {
                 ev_event& e = events[i];
                 if (e.fd == wake_pipe[0]) {
@@ -972,21 +1097,48 @@ struct App::Worker {
 
     void accept_loop() {
         for (;;) {
-            int cfd = ::accept(listen_fd, nullptr, nullptr);
+            struct sockaddr_in peer{};
+            socklen_t peer_len = sizeof(peer);
+#ifdef __linux__
+            int cfd = ::accept4(listen_fd, (struct sockaddr*)&peer, &peer_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+            int cfd = ::accept(listen_fd, (struct sockaddr*)&peer, &peer_len);
+#endif
             if (cfd < 0) {
                 if (errno == EINTR) continue;
                 break; // EAGAIN
             }
+#ifndef __linux__
             set_nonblocking(cfd);
-#ifdef SO_NOSIGPIPE
+#endif
+            if (active_conns_ >= MAX_CONNS) {
+                sys_close(cfd);
+                continue;
+            }
             int one = 1;
+#ifdef TCP_NODELAY
+#ifdef _WIN32
+            setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
+#else
+            setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+#endif
+#endif
+#ifdef TCP_QUICKACK
+            setsockopt(cfd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+#endif
+#ifdef SO_NOSIGPIPE
             setsockopt(cfd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 #endif
             Conn* c = new Conn();
             c->fd = cfd;
             c->worker = this;
+            c->last_recv = std::chrono::steady_clock::now();
+            if (!inet_ntop(AF_INET, &peer.sin_addr, c->remote_ip, sizeof(c->remote_ip))) {
+                std::memcpy(c->remote_ip, "0.0.0.0", 8);
+            }
             ev_add(loop_fd, cfd, true, false);
             set_conn(cfd, c);
+            ++active_conns_;
         }
     }
 
@@ -997,6 +1149,7 @@ struct App::Worker {
             ssize_t n = sys_read(fd, &c->in[old_len], 16384);
             if (n > 0) {
                 c->in.resize(old_len + (size_t)n);
+                c->last_recv = std::chrono::steady_clock::now();
                 if (c->in.size() > app->payload_limit_) { // max request body
                     send_error(c, 413, "Payload Too Large");
                     c->in.clear();
@@ -1039,11 +1192,17 @@ struct App::Worker {
             long n = parse_request(data, avail, scratch);
             if (n == 0) break; // incomplete
             if (n < 0) {
-                send_error(c, 400, "Bad Request");
+                int code = 400;
+                const char* msg = "Bad Request";
+                if (n == -2) { code = 431; msg = "Request Header Fields Too Large"; }
+                else if (n == -3) { code = 414; msg = "URI Too Long"; }
+                else if (n == -4) { code = 405; msg = "Method Not Allowed"; }
+                send_error(c, code, msg);
                 c->consumed = c->in.size();
                 c->want_close = true;
                 break;
             }
+            scratch.remote_addr = c->remote_ip;
             app->handle_request(c, scratch);
             c->consumed += (size_t)n;
             if (c->want_close) break;
@@ -1107,6 +1266,7 @@ struct App::Worker {
         remove_conn(fd);
         c->closed = true;
         sys_close(fd);
+        if (active_conns_ > 0) --active_conns_;
         if (--c->refs == 0) delete c;
     }
 };
@@ -1128,10 +1288,7 @@ void Context::sse(const std::function<void(SseStream&)>& producer) {
         std::string& o = conn->out;
         o += "HTTP/1.1 200 OK\r\n";
         for (const auto& h : res.headers) {
-            o += h.first;
-            o += ": ";
-            o += h.second;
-            o += "\r\n";
+            append_http_header(o, h.first, h.second);
         }
         o += "\r\n";
     }
@@ -1198,6 +1355,11 @@ static const char* mime_for(const std::string& path) {
 
 void Context::serve_file(const std::string& filepath) {
     if (ended) return;
+    if (filepath.find('\0') != std::string::npos || filepath.find("..") != std::string::npos) {
+        res.status = 403;
+        json(json::object({{"error", json::string("Forbidden")}}));
+        return;
+    }
 #ifdef _WIN32
     int fd = ::_open(filepath.c_str(), _O_RDONLY | _O_BINARY);
 #else
@@ -1220,7 +1382,7 @@ void Context::serve_file(const std::string& filepath) {
         return;
     }
     if (st.st_size > (off_t)(64 * 1024 * 1024)) {
-        sys_close(fd);
+        sys_close_file(fd);
         res.status = 413;
         json(json::object({{"error", json::string("File too large")}}));
         return;
@@ -1423,10 +1585,7 @@ App& App::fast_route(const std::string& method, const std::string& path, int sta
     bool has_ct = false;
     bool has_cl = false;
     for (const auto& h : headers) {
-        resp += h.first;
-        resp += ": ";
-        resp += h.second;
-        resp += "\r\n";
+        append_http_header(resp, h.first, h.second);
         std::string name_lower = h.first;
         for (auto& c : name_lower) c = (char)std::tolower((unsigned char)c);
         if (name_lower == "content-type") has_ct = true;
@@ -1479,7 +1638,7 @@ void App::handle_request(Conn* c, Request& req) {
     }
 
     static thread_local std::vector<std::string> segs;
-    split_path(std::string(req.path), segs);
+    split_path(req.path, segs);
     Handler handler;
     std::vector<Middleware> route_mws;
     std::unordered_map<std::string, std::string> params;
@@ -1510,7 +1669,6 @@ void App::handle_request(Conn* c, Request& req) {
                 ctx.json(json::object({{"error", json::string("Forbidden")}}));
             } else {
                 std::string full_path = static_dir_ + decoded_path;
-                // Canonicalize and verify the path stays within static_dir
                 char resolved[4096];
 #ifdef _WIN32
                 if (_fullpath(resolved, full_path.c_str(), sizeof(resolved))) {
@@ -1526,14 +1684,15 @@ void App::handle_request(Conn* c, Request& req) {
                     if (realpath(static_dir_.c_str(), root_resolved))
 #endif
                         canonical_root = root_resolved;
-                    if (!canonical_root.empty() && resolved_str.find(canonical_root) == 0) {
+                    if (!canonical_root.empty() && path_is_inside(resolved_str, canonical_root)) {
                         ctx.serve_file(resolved_str);
                     } else {
                         res.status = 403;
                         ctx.json(json::object({{"error", json::string("Forbidden")}}));
                     }
                 } else {
-                    ctx.serve_file(full_path);
+                    res.status = 404;
+                    ctx.json(json::object({{"error", json::string("Not Found")}}));
                 }
             }
         } catch (...) {
@@ -1564,13 +1723,8 @@ void App::finalize(Conn* c, const Request& req, Response& res) {
 
     bool has_cl = false;
     for (const auto& h : res.headers) {
-        o += h.first;
-        o += ": ";
-        o += h.second;
-        o += "\r\n";
-        std::string hname = h.first;
-        to_lower(hname);
-        if (hname == "content-length") has_cl = true;
+        append_http_header(o, h.first, h.second);
+        if (h.first == "content-length") has_cl = true;
     }
     if (!has_cl) {
         o += "Content-Length: ";
@@ -1587,6 +1741,7 @@ void App::finalize(Conn* c, const Request& req, Response& res) {
 // ---------------------------------------------------------------------------
 void App::hold_conn(Conn* c) { c->refs.fetch_add(1); }
 void App::release_conn(Conn* c) { if (--c->refs == 0) delete c; }
+const char* App::remote_ip(Conn* c) { return c && c->remote_ip[0] ? c->remote_ip : "0.0.0.0"; }
 uint64_t App::alloc_seq(Conn* c) { return c->next_req_seq++; }
 
 void App::respond_async(Conn* c, uint64_t seq, int status,
@@ -1601,10 +1756,7 @@ void App::respond_async(Conn* c, uint64_t seq, int status,
     raw += "\r\n";
     bool has_cl = false;
     for (const auto& h : headers) {
-        raw += h.first;
-        raw += ": ";
-        raw += h.second;
-        raw += "\r\n";
+        append_http_header(raw, h.first, h.second);
         if (h.first.size() == 14) {
             char b[15];
             for (size_t i = 0; i < 14; ++i) b[i] = (char)tolower((unsigned char)h.first[i]);

@@ -13,6 +13,8 @@ Velociradix is built from the ground up for extreme throughput, zero runtime dep
 | **Object Pooling** | V8 Monomorphic Shape Pools | Zero Garbage Collection shape churn on `Context` and `Request` wrappers. |
 | **Response Tail Caching** | Shared 1-Second Format Buffers | Eliminates redundant string allocations for `Date`, `Server`, and `Connection`. |
 | **Fast-Path Engine** | `fastGet`, `fastPost`, `fastRoute` | Bypasses V8 execution entirely to serve static JSON/text directly from C++ memory. |
+| **HTTP Parser** | RFC 7230 tchar + smuggling guards | Rejects TE+CL, duplicate Content-Length, obs-fold, TRACE; 32 KiB header cap. |
+| **Socket Tuning** | `TCP_NODELAY`, Linux `accept4` | Immediate small-response flush; one-syscall accept on Linux. |
 
 ---
 

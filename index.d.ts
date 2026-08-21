@@ -150,23 +150,23 @@ export interface SetCookieOptions {
   secure?: boolean;
   /** Expiration time in seconds from current time */
   maxAge?: number;
-  /** Cookie URL path scope */
+  /** Cookie URL path scope (default: '/') */
   path?: string;
   /** Cookie domain scope */
   domain?: string;
-  /** SameSite attribute ('Strict' | 'Lax' | 'None') */
+  /** SameSite attribute (default: 'Lax') */
   sameSite?: 'Strict' | 'Lax' | 'None' | string;
 }
 
 /** CORS middleware configuration options */
 export interface CorsOptions {
-  /** Allowed origins (default: '*') */
-  origin?: string;
+  /** Allowed origins: string, list, `true` (reflect request), or validator (default: '*') */
+  origin?: string | string[] | boolean | ((origin: string, ctx: Context) => string);
   /** Allowed HTTP methods (default: 'GET,POST,PUT,DELETE,PATCH,OPTIONS') */
   methods?: string;
   /** Allowed request headers (default: 'Content-Type,Authorization') */
   headers?: string;
-  /** Allow credentials / cookies (Access-Control-Allow-Credentials) */
+  /** Allow credentials / cookies (Access-Control-Allow-Credentials). Never combined with origin '*'. */
   credentials?: boolean;
   /** Preflight cache duration in seconds (Access-Control-Max-Age) */
   maxAge?: number;
@@ -186,6 +186,10 @@ export interface JwtAuthOptions {
   secret: string;
   /** Allowed algorithms (default: ['HS256']) — pass ['HS256','HS384','HS512'] to allow all HMAC variants */
   algorithms?: string[];
+  /** Required issuer claim */
+  issuer?: string;
+  /** Required audience claim */
+  audience?: string;
 }
 
 /** JWT Signing options */
@@ -194,6 +198,24 @@ export interface JwtSignOptions {
   alg?: string;
   /** Expiration time in seconds from creation time */
   expiresIn?: number;
+  /** Not-before offset in seconds from creation time (`nbf` claim) */
+  notBefore?: number;
+  /** Issuer claim (`iss`) */
+  issuer?: string;
+  /** Audience claim (`aud`) */
+  audience?: string;
+}
+
+/** JWT verification options */
+export interface JwtVerifyOptions {
+  /** Allowed algorithms (default: ['HS256']) */
+  algorithms?: string[];
+  /** Clock skew in seconds (default: 30) */
+  clockTolerance?: number;
+  /** Required issuer claim */
+  issuer?: string;
+  /** Required audience claim */
+  audience?: string;
 }
 
 /** Rate Limiting options */
@@ -204,6 +226,8 @@ export interface RateLimitOptions {
   max?: number;
   /** Error response message when rate limit exceeded */
   message?: string;
+  /** Max unique keys stored (default: 10000) — prevents memory exhaustion */
+  maxKeys?: number;
 }
 
 /** Progressive Slow Down options */
@@ -230,6 +254,20 @@ export interface HelmetOptions {
   frameOptions?: string;
   /** Referrer-Policy value (default: 'no-referrer') */
   referrerPolicy?: string;
+  /** Cross-Origin-Opener-Policy (default: 'same-origin') */
+  crossOriginOpenerPolicy?: string;
+  /** Cross-Origin-Resource-Policy (default: 'same-origin') */
+  crossOriginResourcePolicy?: string;
+  /** Permissions-Policy value */
+  permissionsPolicy?: string;
+  /** Content-Security-Policy. Pass `false` to disable. */
+  contentSecurityPolicy?: string | false;
+  /** Send HSTS (default: true) */
+  hsts?: boolean;
+  /** HSTS max-age in seconds (default: 15552000) */
+  hstsMaxAge?: number;
+  /** Append HSTS preload directive */
+  hstsPreload?: boolean;
 }
 
 /** Request Logger options */
@@ -519,6 +557,8 @@ export interface Request {
   readonly headers: Record<string, string>;
   /** Key-value object of route path parameters (e.g. `:id`) */
   readonly params: Record<string, string>;
+  /** TCP peer address captured at accept() (not spoofable via X-Forwarded-For) */
+  readonly remoteAddress: string;
   /** Get header value by case-insensitive name */
   get(name: string): string | undefined;
   /** Get header value by case-insensitive name (alias) */
@@ -694,7 +734,7 @@ export interface Context extends Response {
   jwtSign(payload: Record<string, string | number | boolean>, secret: string, opts?: JwtSignOptions): string;
 
   /** Verifies and decodes a Bearer JWT token from request headers */
-  jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(secret: string, opts?: { algorithms?: string[] }): T;
+  jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(secret: string, opts?: JwtVerifyOptions): T;
 
   /** Generates or retrieves double-submit CSRF cookie token */
   csrfToken(): string;
@@ -1037,7 +1077,7 @@ export const app: App;
 /** Signs a JWT payload using HMAC-SHA256 */
 export function jwtSign(payload: Record<string, string | number | boolean>, secret: string, opts?: JwtSignOptions): string;
 /** Verifies and decodes a JWT token */
-export function jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(token: string, secret: string, opts?: { algorithms?: string[] }): T;
+export function jwtVerify<T extends Record<string, JsonValue> = Record<string, JsonValue>>(token: string, secret: string, opts?: JwtVerifyOptions): T;
 /** Encrypts string text using AES-256-GCM */
 export function encryptValue(text: string, secretKey: string): string;
 /** Decrypts encrypted text using AES-256-GCM */

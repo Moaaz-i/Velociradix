@@ -7,9 +7,9 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, openSync, readSync, closeSync } from "node:fs";
 import { createRequire } from 'node:module';
-import { basename, extname, join, resolve, normalize, relative } from "node:path";
+import { basename, extname, join, resolve, normalize, relative, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import http from "node:http";
 import zlib from "node:zlib";
@@ -27,6 +27,25 @@ try {
 }
 
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'];
+const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const JWT_MAX_LENGTH = 8192;
+const JWT_CLOCK_SKEW = 30;
+
+function sanitizeHeaderPart(s) {
+  return String(s).replace(/[\r\n\0]+/g, '');
+}
+
+function timingSafeEqualString(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
+function isPathInside(root, target) {
+  const rel = relative(root, target);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
 
 // --- HTTP Error Classes ---
 class HttpError extends Error {
@@ -62,6 +81,7 @@ function base64UrlDecode(str) {
 }
 
 function jwtSign(payload, secret, opts = {}) {
+  if (!secret || typeof secret !== 'string') throw new Error('JWT secret is required');
   const algMap = { HS256: 'sha256', HS384: 'sha384', HS512: 'sha512' };
   const alg = opts.alg || 'HS256';
   const hashAlg = algMap[alg];
@@ -72,6 +92,9 @@ function jwtSign(payload, secret, opts = {}) {
     ...payload,
     iat: payload.iat || now,
     ...(opts.expiresIn ? { exp: now + opts.expiresIn } : {}),
+    ...(opts.notBefore ? { nbf: now + opts.notBefore } : {}),
+    ...(opts.issuer ? { iss: opts.issuer } : {}),
+    ...(opts.audience ? { aud: opts.audience } : {}),
   };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
@@ -83,7 +106,9 @@ function jwtSign(payload, secret, opts = {}) {
 }
 
 function jwtVerify(token, secret, opts = {}) {
+  if (!secret || typeof secret !== 'string') throw new UnauthorizedError('JWT secret is required');
   if (!token || typeof token !== 'string') throw new UnauthorizedError('Invalid token format');
+  if (token.length > JWT_MAX_LENGTH) throw new UnauthorizedError('Token too large');
   const parts = token.split('.');
   if (parts.length !== 3) throw new UnauthorizedError('Invalid token structure');
   const [headerB64, payloadB64, signatureB64] = parts;
@@ -102,15 +127,31 @@ function jwtVerify(token, secret, opts = {}) {
     .update(`${headerB64}.${payloadB64}`)
     .digest('base64')
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  if (signatureB64 !== expectedSig) throw new UnauthorizedError('Invalid token signature');
-  const payload = JSON.parse(base64UrlDecode(payloadB64));
-  if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+  if (!timingSafeEqualString(signatureB64, expectedSig)) throw new UnauthorizedError('Invalid token signature');
+  let payload;
+  try { payload = JSON.parse(base64UrlDecode(payloadB64)); } catch { throw new UnauthorizedError('Invalid token payload'); }
+  const now = Math.floor(Date.now() / 1000);
+  const skew = opts.clockTolerance ?? JWT_CLOCK_SKEW;
+  if (payload.nbf && now + skew < payload.nbf) {
+    throw new UnauthorizedError('Token not yet valid');
+  }
+  if (payload.exp && now - skew > payload.exp) {
     throw new UnauthorizedError('Token expired');
+  }
+  if (opts.issuer && payload.iss !== opts.issuer) {
+    throw new UnauthorizedError('Invalid token issuer');
+  }
+  if (opts.audience) {
+    const aud = payload.aud;
+    const expected = opts.audience;
+    const ok = Array.isArray(aud) ? aud.includes(expected) : aud === expected;
+    if (!ok) throw new UnauthorizedError('Invalid token audience');
   }
   return payload;
 }
 
 function encryptValue(text, secretKey) {
+  if (!secretKey) throw new Error('Encryption secret is required');
   const key = createHmac('sha256', secretKey).digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -122,11 +163,14 @@ function encryptValue(text, secretKey) {
 
 function decryptValue(encryptedText, secretKey) {
   try {
+    if (!secretKey || typeof encryptedText !== 'string') return undefined;
     const key = createHmac('sha256', secretKey).digest();
     const parts = encryptedText.split(':');
     if (parts.length !== 3) return undefined;
+    if (parts[0].length !== 24 || parts[1].length !== 32) return undefined;
     const iv = Buffer.from(parts[0], 'hex');
     const authTag = Buffer.from(parts[1], 'hex');
+    if (iv.length !== 12 || authTag.length !== 16) return undefined;
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(parts[2], 'hex', 'utf8');
@@ -150,6 +194,7 @@ class Request {
     this._body = undefined;
     this._headers = undefined;
     this._params = undefined;
+    this._remoteIp = undefined;
   }
   get method() { return this._method ??= (native.getMethod(this._ptr) || 'GET'); }
   get url() { return this.path; }
@@ -158,6 +203,7 @@ class Request {
   get body() { return this._body ??= native.getBody(this._ptr); }
   get headers() { return this._headers ??= (native.getHeaders(this._ptr) || {}); }
   get params() { return this._params ??= (native.getParams(this._ptr) || {}); }
+  get remoteAddress() { return this._remoteIp ??= (native.getRemoteIp?.(this._ptr) || '127.0.0.1'); }
 }
 
 const MAX_POOL_SIZE = 8192;
@@ -193,6 +239,8 @@ function releaseContext(ctx) {
     ctx.validParams = undefined;
     ctx._bodyData = undefined;
     ctx.cookies = undefined;
+    ctx.query = Context.prototype.query;
+    ctx.send = Context.prototype.send;
     if (ctx._req) ctx._req._reset(0);
     contextPool.push(ctx);
   }
@@ -325,13 +373,20 @@ class Context {
     this._expressResList = undefined;
     this._sse = false;
     this._sanitizedQuery = false;
+    this.query = Context.prototype.query;
+    this.send = Context.prototype.send;
     this._req._reset(ptr);
   }
 
   get req() { return this._req; }
   get res() { return this; }
   status(c) { this.statusCode = c; return this; }
-  setHeader(k, v) { (this._headers ??= {})[String(k).toLowerCase()] = String(v); return this; }
+  setHeader(k, v) {
+    const name = sanitizeHeaderPart(k);
+    const value = Array.isArray(v) ? v.map(sanitizeHeaderPart).join(', ') : sanitizeHeaderPart(v);
+    (this._headers ??= {})[name.toLowerCase()] = value;
+    return this;
+  }
   set(k, v) {
     if (typeof k === 'object' && k !== null) {
       for (const key in k) this.setHeader(key, k[key]);
@@ -341,17 +396,19 @@ class Context {
     return this;
   }
   setCookie(name, value, opts = {}) {
-    const encName = encodeURIComponent(String(name));
-    const encValue = encodeURIComponent(String(value));
+    const encName = encodeURIComponent(sanitizeHeaderPart(name));
+    const encValue = encodeURIComponent(sanitizeHeaderPart(value));
     let c = `${encName}=${encValue}`;
     if (opts.httpOnly) c += '; HttpOnly';
     if (opts.secure) c += '; Secure';
-    if (opts.maxAge !== undefined) c += `; Max-Age=${opts.maxAge}`;
-    if (opts.path) c += `; Path=${opts.path}`;
-    if (opts.domain) c += `; Domain=${opts.domain}`;
-    if (opts.sameSite) c += `; SameSite=${opts.sameSite}`;
-    const prev = this._headers?.['Set-Cookie'];
-    (this._headers ??= {})['Set-Cookie'] = prev ? prev + ', ' + c : c;
+    if (opts.maxAge !== undefined) c += `; Max-Age=${Number(opts.maxAge) || 0}`;
+    const path = sanitizeHeaderPart(opts.path ?? '/');
+    if (path) c += `; Path=${path}`;
+    if (opts.domain) c += `; Domain=${sanitizeHeaderPart(opts.domain)}`;
+    const sameSite = opts.sameSite ? sanitizeHeaderPart(opts.sameSite) : 'Lax';
+    if (sameSite) c += `; SameSite=${sameSite}`;
+    const prev = this._headers?.['set-cookie'];
+    (this._headers ??= {})['set-cookie'] = prev ? prev + ', ' + c : c;
     return this;
   }
   clearCookie(name, opts = {}) {
@@ -388,7 +445,7 @@ class Context {
   json(v) { ensureContentType(this, 'application/json; charset=utf-8'); return this.send(Buffer.from(JSON.stringify(v), 'utf8')); }
   html(v) { ensureContentType(this, 'text/html; charset=utf-8'); return this.send(Buffer.from(String(v), 'utf8')); }
 
-  redirect(url, code = 302) { this.setHeader('Location', url); return this.status(code).send(''); }
+  redirect(url, code = 302) { this.setHeader('Location', sanitizeHeaderPart(url)); return this.status(code).send(''); }
   noCache() {
     return this.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -432,7 +489,7 @@ class Context {
       const xreal = this.get('x-real-ip');
       if (xreal) return xreal;
     }
-    return '127.0.0.1';
+    return this.req.remoteAddress || '127.0.0.1';
   }
   get secure() {
     return this._app?._trustProxy ? (this.get('x-forwarded-proto') || '').toLowerCase() === 'https' : false;
@@ -511,10 +568,13 @@ class Context {
     });
   }
   sendFile(filepath, opts = {}) {
-    const resolved = resolve(filepath);
+    if (typeof filepath !== 'string' || filepath.includes('\0')) {
+      return this.status(400).send('Invalid path');
+    }
+    const resolved = resolve(opts.root ? join(opts.root, filepath) : filepath);
     if (opts.root) {
       const rootResolved = resolve(opts.root);
-      if (!resolved.startsWith(rootResolved + '/') && resolved !== rootResolved) {
+      if (!isPathInside(rootResolved, resolved)) {
         return this.status(403).send('Forbidden');
       }
     }
@@ -522,8 +582,12 @@ class Context {
       return this.status(404).send('File Not Found');
     }
     const stat = statSync(resolved);
+    if (!stat.isFile()) {
+      return this.status(403).send('Forbidden');
+    }
     const etag = `"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
     this.setHeader('ETag', etag);
+    this.setHeader('Accept-Ranges', 'bytes');
 
     if (this.get('if-none-match') === etag) {
       return this.status(304).send('');
@@ -531,19 +595,47 @@ class Context {
 
     const range = this.get('range');
     if (range && range.startsWith('bytes=')) {
-      const parts = range.slice(6).split('-');
-      const start = parseInt(parts[0], 10) || 0;
-      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const spec = range.slice(6).split(',')[0].trim();
+      const dash = spec.indexOf('-');
+      if (dash === -1) {
+        this.status(416).setHeader('Content-Range', `bytes */${stat.size}`);
+        return this.send('');
+      }
+      const startStr = spec.slice(0, dash);
+      const endStr = spec.slice(dash + 1);
+      let start;
+      let end;
+      if (startStr === '') {
+        const suffix = parseInt(endStr, 10);
+        if (!Number.isFinite(suffix) || suffix <= 0) {
+          this.status(416).setHeader('Content-Range', `bytes */${stat.size}`);
+          return this.send('');
+        }
+        start = Math.max(0, stat.size - suffix);
+        end = stat.size - 1;
+      } else {
+        start = parseInt(startStr, 10);
+        end = endStr ? parseInt(endStr, 10) : stat.size - 1;
+      }
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+        this.status(416).setHeader('Content-Range', `bytes */${stat.size}`);
+        return this.send('');
+      }
+      end = Math.min(end, stat.size - 1);
       const chunksize = end - start + 1;
-      const content = readFileSync(resolved).subarray(start, end + 1);
-
+      const buf = Buffer.allocUnsafe(chunksize);
+      const fd = openSync(resolved, 'r');
+      try {
+        readSync(fd, buf, 0, chunksize, start);
+      } finally {
+        closeSync(fd);
+      }
       this.status(206).set({
         'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-        'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': opts.contentType || getMimeType(resolved),
       });
-      return this.send(content);
+      return this.send(buf);
     }
 
     this.setHeader('Content-Type', opts.contentType || getMimeType(resolved));
@@ -633,7 +725,10 @@ class Context {
   renderHtml(template, data = {}) {
     let output = template;
     for (const key in data) {
-      output = output.replace(new RegExp(`{{\\s*${key}\\s*}}`, 'g'), sanitizeString(String(data[key])));
+      if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+      if (PROTO_POLLUTION_KEYS.has(key)) continue;
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      output = output.replace(new RegExp(`{{\\s*${escapedKey}\\s*}}`, 'g'), sanitizeString(String(data[key])));
     }
     return this.html(output);
   }
@@ -821,23 +916,40 @@ function getMimeType(file) {
   return map[ext] || 'application/octet-stream';
 }
 
+function decodeQueryComponent(s) {
+  try {
+    return decodeURIComponent(String(s).replace(/\+/g, ' '));
+  } catch {
+    return String(s);
+  }
+}
+
 function queryParse(q) {
-  const out = {};
+  const out = Object.create(null);
   if (!q) return out;
   for (const pair of q.split('&')) {
     if (!pair) continue;
     const eq = pair.indexOf('=');
-    out[decodeURIComponent(eq === -1 ? pair : pair.slice(0, eq))] = decodeURIComponent(eq === -1 ? '' : pair.slice(eq + 1));
+    const k = decodeQueryComponent(eq === -1 ? pair : pair.slice(0, eq));
+    if (!k || PROTO_POLLUTION_KEYS.has(k)) continue;
+    out[k] = decodeQueryComponent(eq === -1 ? '' : pair.slice(eq + 1));
   }
   return out;
 }
 
 function cookieParse(h) {
-  const out = {};
+  const out = Object.create(null);
   if (!h) return out;
   for (const part of h.split(/;\s*|,\s+/)) {
     const eq = part.indexOf('=');
-    if (eq !== -1) out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+    if (eq === -1) continue;
+    const k = part.slice(0, eq).trim();
+    if (!k || PROTO_POLLUTION_KEYS.has(k)) continue;
+    try {
+      out[k] = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      out[k] = part.slice(eq + 1).trim();
+    }
   }
   return out;
 }
@@ -940,19 +1052,37 @@ function loggerMiddleware(opts = {}) {
 }
 
 function corsMiddleware(opts = {}) {
-  const origin = opts.origin ?? '*';
+  const originOpt = opts.origin ?? '*';
   const methods = opts.methods ?? 'GET,POST,PUT,DELETE,PATCH,OPTIONS';
   const headers = opts.headers ?? 'Content-Type,Authorization';
-  const allowCredentials = opts.credentials ? 'true' : null;
+  const allowCredentials = Boolean(opts.credentials);
   const maxAge = opts.maxAge ? String(opts.maxAge) : null;
 
   return (ctx, next) => {
-    ctx.set({
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': methods,
-      'Access-Control-Allow-Headers': headers,
-    });
-    if (allowCredentials) ctx.setHeader('Access-Control-Allow-Credentials', allowCredentials);
+    const reqOrigin = ctx.get('origin') || '';
+    let allowOrigin = '*';
+    if (typeof originOpt === 'function') {
+      allowOrigin = originOpt(reqOrigin, ctx) || '';
+    } else if (Array.isArray(originOpt)) {
+      allowOrigin = originOpt.includes(reqOrigin) ? reqOrigin : '';
+    } else if (originOpt === true) {
+      allowOrigin = reqOrigin || '*';
+    } else {
+      allowOrigin = originOpt;
+    }
+    if (allowCredentials && allowOrigin === '*') {
+      allowOrigin = reqOrigin || '';
+    }
+    if (allowOrigin) ctx.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    ctx.setHeader('Access-Control-Allow-Methods', methods);
+    ctx.setHeader('Access-Control-Allow-Headers', headers);
+    if (allowOrigin && allowOrigin !== '*') {
+      const prevVary = ctx._headers?.['vary'];
+      ctx.setHeader('Vary', prevVary && !String(prevVary).includes('Origin') ? `${prevVary}, Origin` : 'Origin');
+    }
+    if (allowCredentials && allowOrigin && allowOrigin !== '*') {
+      ctx.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     if (maxAge) ctx.setHeader('Access-Control-Max-Age', maxAge);
 
     return ctx.req.method === 'OPTIONS' ? ctx.status(204).send('') : next();
@@ -964,7 +1094,7 @@ function bearerAuthMiddleware(opts = {}) {
   return (ctx, next) => {
     const t = ctx.bearerToken();
     if (!t) return ctx.status(401).json({ error: 'Missing Bearer token' });
-    if (token && t !== token) return ctx.status(401).json({ error: 'Invalid Bearer token' });
+    if (token && !timingSafeEqualString(t, token)) return ctx.status(401).json({ error: 'Invalid Bearer token' });
     if (verify && !verify(t, ctx)) return ctx.status(401).json({ error: 'Unauthorized' });
     return next();
   };
@@ -975,7 +1105,11 @@ function jwtAuthMiddleware(opts = {}) {
   const algorithms = opts.algorithms;
   return (ctx, next) => {
     try {
-      ctx.state.user = ctx.jwtVerify(secret, algorithms ? { algorithms } : undefined);
+      ctx.state.user = ctx.jwtVerify(secret, {
+        ...(algorithms ? { algorithms } : {}),
+        ...(opts.issuer ? { issuer: opts.issuer } : {}),
+        ...(opts.audience ? { audience: opts.audience } : {}),
+      });
       return next();
     } catch (err) {
       return ctx.status(401).json({ error: err.message });
@@ -1013,12 +1147,24 @@ function compressMiddleware(opts = {}) {
 }
 
 function csrfMiddleware(opts = {}) {
+  const headerName = opts.headerName || 'x-csrf-token';
   return (ctx, next) => {
     const token = ctx.csrfToken();
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(ctx.req.method)) {
-      const headerToken = ctx.get('x-csrf-token') || ctx.query('_csrf');
-      if (!headerToken || headerToken !== token) {
+      const headerToken = ctx.get(headerName) || ctx.get('x-xsrf-token');
+      if (!headerToken || !timingSafeEqualString(headerToken, token)) {
         return ctx.status(403).json({ error: 'Invalid or missing CSRF token' });
+      }
+      const origin = ctx.get('origin');
+      if (origin) {
+        try {
+          const host = ctx.get('host') || '';
+          if (new URL(origin).host !== host) {
+            return ctx.status(403).json({ error: 'CSRF origin mismatch' });
+          }
+        } catch {
+          return ctx.status(403).json({ error: 'CSRF origin mismatch' });
+        }
       }
     }
     return next();
@@ -1114,7 +1260,12 @@ function sessionMiddleware(opts = {}) {
     const existing = ctx.getEncryptedCookie(name, secret);
     ctx._session = existing || {};
     const res = next();
-    ctx.setEncryptedCookie(name, ctx._session, secret, opts.cookie);
+    ctx.setEncryptedCookie(name, ctx._session, secret, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      ...opts.cookie,
+    });
     return res;
   };
 }
@@ -1144,7 +1295,7 @@ function slowDownMiddleware(opts = {}) {
       record.count++;
     }
     if (record.count > delayAfter) {
-      const extraDelay = (record.count - delayAfter) * delayMs;
+      const extraDelay = Math.min((record.count - delayAfter) * delayMs, 5000);
       await new Promise((r) => setTimeout(r, extraDelay));
     }
     return next();
@@ -1155,6 +1306,7 @@ function rateLimitMiddleware(opts = {}) {
   const windowMs = opts.windowMs ?? 60000;
   const max = opts.max ?? 100;
   const message = opts.message ?? 'Too Many Requests';
+  const maxKeys = opts.maxKeys ?? 10000;
   const hits = new Map();
 
   const gcTimer = setInterval(() => {
@@ -1170,6 +1322,10 @@ function rateLimitMiddleware(opts = {}) {
     const now = Date.now();
     let record = hits.get(ip);
     if (!record || now > record.resetTime) {
+      if (!record && hits.size >= maxKeys) {
+        const firstKey = hits.keys().next().value;
+        if (firstKey !== undefined) hits.delete(firstKey);
+      }
       record = { count: 1, resetTime: now + windowMs };
       hits.set(ip, record);
     } else {
@@ -1178,20 +1334,40 @@ function rateLimitMiddleware(opts = {}) {
     ctx.set({
       'X-RateLimit-Limit': max,
       'X-RateLimit-Remaining': Math.max(0, max - record.count),
+      'X-RateLimit-Reset': Math.ceil(record.resetTime / 1000),
     });
-    return record.count > max ? ctx.status(429).send(message) : next();
+    if (record.count > max) {
+      ctx.setHeader('Retry-After', Math.ceil((record.resetTime - now) / 1000));
+      return ctx.status(429).send(message);
+    }
+    return next();
   };
 }
 
 function helmetMiddleware(opts = {}) {
   return (ctx, next) => {
-    ctx.set({
+    const headers = {
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': opts.frameOptions ?? 'SAMEORIGIN',
-      'X-XSS-Protection': '1; mode=block',
-      'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
+      'X-XSS-Protection': '0',
+      'X-Download-Options': 'noopen',
+      'X-Permitted-Cross-Domain-Policies': 'none',
+      'X-DNS-Prefetch-Control': 'off',
       'Referrer-Policy': opts.referrerPolicy ?? 'no-referrer',
-    });
+      'Cross-Origin-Opener-Policy': opts.crossOriginOpenerPolicy ?? 'same-origin',
+      'Cross-Origin-Resource-Policy': opts.crossOriginResourcePolicy ?? 'same-origin',
+      'Origin-Agent-Cluster': '?1',
+      'Permissions-Policy': opts.permissionsPolicy ?? 'camera=(), microphone=(), geolocation=()',
+    };
+    if (opts.hsts !== false) {
+      const maxAge = opts.hstsMaxAge ?? 15552000;
+      headers['Strict-Transport-Security'] = `max-age=${maxAge}; includeSubDomains${opts.hstsPreload ? '; preload' : ''}`;
+    }
+    if (opts.contentSecurityPolicy !== false) {
+      headers['Content-Security-Policy'] = opts.contentSecurityPolicy
+        ?? "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'";
+    }
+    ctx.set(headers);
     return next();
   };
 }
@@ -1507,15 +1683,27 @@ function rateLimitByKeyMiddleware(opts = {}) {
   const max = opts.max ?? 100;
   const keyFn = opts.keyFn || ((ctx) => ctx.ip);
   const message = opts.message ?? 'Too Many Requests';
+  const maxKeys = opts.maxKeys ?? 10000;
   const hits = new Map();
+
+  const gcTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of hits.entries()) {
+      if (now > record.resetTime) hits.delete(key);
+    }
+  }, Math.max(windowMs, 5000));
+  if (gcTimer.unref) gcTimer.unref();
 
   return async (ctx, next) => {
     const key = String(await keyFn(ctx) || ctx.ip);
     const now = Date.now();
-    const record = hits.get(key) || { count: 0, resetTime: now + windowMs };
-    if (now > record.resetTime) {
-      record.count = 0;
-      record.resetTime = now + windowMs;
+    let record = hits.get(key);
+    if (!record || now > record.resetTime) {
+      if (!record && hits.size >= maxKeys) {
+        const firstKey = hits.keys().next().value;
+        if (firstKey !== undefined) hits.delete(firstKey);
+      }
+      record = { count: 0, resetTime: now + windowMs };
     }
     record.count++;
     hits.set(key, record);
@@ -1788,11 +1976,23 @@ function createEventBus(options = {}) {
 }
 
 function parseMultipartBuffer(bodyBuffer, boundary, options = {}) {
+  const maxFiles = options.maxFiles ?? 20;
+  const maxFields = options.maxFields ?? 100;
+  const maxFileSize = options.maxFileSize ?? 8 * 1024 * 1024;
+  const maxFieldSize = options.maxFieldSize ?? 1024 * 1024;
+  if (typeof boundary !== 'string' || boundary.length === 0 || boundary.length > 70) {
+    throw new BadRequestError('Invalid multipart boundary');
+  }
+  if (/[\r\n]/.test(boundary)) {
+    throw new BadRequestError('Invalid multipart boundary');
+  }
   const boundaryDelimiter = `--${boundary}`;
   const str = bodyBuffer.toString('binary');
   const parts = str.split(boundaryDelimiter);
-  const fields = {};
-  const files = {};
+  const fields = Object.create(null);
+  const files = Object.create(null);
+  let fileCount = 0;
+  let fieldCount = 0;
 
   for (let i = 1; i < parts.length; i++) {
     const part = parts[i];
@@ -1804,20 +2004,25 @@ function parseMultipartBuffer(bodyBuffer, boundary, options = {}) {
     const headerStr = part.slice(0, headerEndIdx);
     const bodyStr = part.slice(headerEndIdx + 4, part.lastIndexOf('\r\n'));
 
-    const dispMatch = headerStr.match(/Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]+)")?/i);
+    const dispMatch = headerStr.match(/Content-Disposition:\s*form-data;\s*name="([^"]*)"(?:;\s*filename="([^"]*)")?/i);
     if (!dispMatch) continue;
 
     const fieldName = dispMatch[1];
+    if (!fieldName || PROTO_POLLUTION_KEYS.has(fieldName)) continue;
     const fileName = dispMatch[2];
 
     if (fileName !== undefined) {
+      if (++fileCount > maxFiles) throw new BadRequestError('Too many uploaded files');
+      const fileBuffer = Buffer.from(bodyStr, 'binary');
+      if (fileBuffer.length > maxFileSize) throw new BadRequestError('Uploaded file too large');
       const ctMatch = headerStr.match(/Content-Type:\s*([^\r\n;]+)/i);
       const mimeType = ctMatch ? ctMatch[1].trim() : 'application/octet-stream';
-      const fileBuffer = Buffer.from(bodyStr, 'binary');
+      const safeBase = basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128) || 'upload';
 
       const uploadedFile = {
         fieldname: fieldName,
-        filename: fileName,
+        filename: safeBase,
+        originalName: basename(fileName).slice(0, 255),
         mimetype: mimeType,
         size: fileBuffer.length,
         buffer: fileBuffer,
@@ -1825,11 +2030,15 @@ function parseMultipartBuffer(bodyBuffer, boundary, options = {}) {
       };
 
       if (options.uploadDir) {
-        if (!existsSync(options.uploadDir)) {
-          mkdirSync(options.uploadDir, { recursive: true });
+        const uploadRoot = resolve(options.uploadDir);
+        if (!existsSync(uploadRoot)) {
+          mkdirSync(uploadRoot, { recursive: true });
         }
-        const safeName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        const targetPath = join(options.uploadDir, safeName);
+        const safeName = `${Date.now()}_${randomBytes(8).toString('hex')}_${safeBase}`;
+        const targetPath = join(uploadRoot, safeName);
+        if (!isPathInside(uploadRoot, resolve(targetPath))) {
+          throw new BadRequestError('Invalid upload path');
+        }
         writeFileSync(targetPath, fileBuffer);
         uploadedFile.filepath = targetPath;
       }
@@ -1841,6 +2050,8 @@ function parseMultipartBuffer(bodyBuffer, boundary, options = {}) {
         files[fieldName] = uploadedFile;
       }
     } else {
+      if (++fieldCount > maxFields) throw new BadRequestError('Too many form fields');
+      if (bodyStr.length > maxFieldSize) throw new BadRequestError('Form field too large');
       const fieldValue = Buffer.from(bodyStr, 'binary').toString('utf8');
       if (fields[fieldName]) {
         if (Array.isArray(fields[fieldName])) fields[fieldName].push(fieldValue);
@@ -2568,7 +2779,7 @@ function createApp() {
         const reqPath = ctx.req.path.slice(prefix.length);
         const target = resolve(staticDir, reqPath.replace(/^\//, ''));
         const rel = relative(staticDir, target);
-        if (rel.startsWith('..') || rel.isAbsolute()) {
+        if (rel.startsWith('..') || isAbsolute(rel)) {
           return ctx.status(403).send('Forbidden');
         }
         return ctx.sendFile(target, opts);
